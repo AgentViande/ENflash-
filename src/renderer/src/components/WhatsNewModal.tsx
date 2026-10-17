@@ -22,13 +22,14 @@ export const WhatsNewModal: React.FC<WhatsNewModalProps> = ({ isOpen, version, o
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 110,
-        animation: 'fadeInScale 0.25s ease',
+        animation: 'modalBackdropFade 0.15s ease',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: '520px',
           maxWidth: '92vw',

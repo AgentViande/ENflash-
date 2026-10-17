@@ -6,6 +6,13 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 
 ---
 
+## [v1.0.2] - 2026-10-18
+
+### 🐛 Corrections
+- **Saisie de mots et formulaires** : correction complète des champs de texte non cliquables dans la modale d'ajout rapide et les modales de modification. Rétablissement du focus souris/clavier, réactivation de la sélection de texte et suppression des interférences de transformation CSS sur les fenêtres surgissantes.
+
+---
+
 ## [v1.0.1] - 2026-10-18
 
 ### 🐛 Corrections

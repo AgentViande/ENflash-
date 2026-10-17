@@ -1,6 +1,6 @@
 {
   "name": "enflash",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Application de bureau d'apprentissage du vocabulaire anglais par flashcards et répétition espacée",
   "main": "dist-electron/main/index.js",
   "author": "Lilian <agentviande>",

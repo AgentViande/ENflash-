@@ -436,12 +436,14 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({ onStartStudyPl
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 100,
+            animation: 'modalBackdropFade 0.15s ease',
           }}
           onClick={(e) => {
             if (e.target === e.currentTarget) setIsCreateModalOpen(false);
           }}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: '500px',
               maxWidth: '92vw',
@@ -452,6 +454,8 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({ onStartStudyPl
               display: 'flex',
               flexDirection: 'column',
               gap: '18px',
+              animation: 'modalContentPop 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: 'auto',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -560,12 +564,14 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({ onStartStudyPl
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 100,
+            animation: 'modalBackdropFade 0.15s ease',
           }}
           onClick={(e) => {
             if (e.target === e.currentTarget) setManagingWordsPlaylist(null);
           }}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: '640px',
               maxWidth: '92vw',
@@ -577,6 +583,8 @@ export const PlaylistsScreen: React.FC<PlaylistsScreenProps> = ({ onStartStudyPl
               flexDirection: 'column',
               gap: '16px',
               maxHeight: '80vh',
+              animation: 'modalContentPop 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: 'auto',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

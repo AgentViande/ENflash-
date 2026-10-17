@@ -58,13 +58,14 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, updateInfo, on
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 110,
-        animation: 'fadeInScale 0.25s ease',
+        animation: 'modalBackdropFade 0.15s ease',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget && !downloading) onClose();
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: '540px',
           maxWidth: '92vw',

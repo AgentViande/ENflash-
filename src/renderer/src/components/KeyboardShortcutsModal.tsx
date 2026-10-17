@@ -31,13 +31,14 @@ export const KeyboardShortcutsModal: React.FC<KeyboardShortcutsModalProps> = ({ 
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 100,
-        animation: 'fadeInScale 0.2s ease',
+        animation: 'modalBackdropFade 0.15s ease',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
+        onClick={(e) => e.stopPropagation()}
         style={{
           width: '520px',
           maxWidth: '92vw',

@@ -506,12 +506,14 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 100,
+            animation: 'modalBackdropFade 0.15s ease',
           }}
           onClick={(e) => {
             if (e.target === e.currentTarget) setEditingWord(null);
           }}
         >
           <div
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: '560px',
               maxWidth: '92vw',
@@ -522,6 +524,8 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
               display: 'flex',
               flexDirection: 'column',
               gap: '18px',
+              animation: 'modalContentPop 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
+              pointerEvents: 'auto',
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

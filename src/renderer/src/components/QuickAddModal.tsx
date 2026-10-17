@@ -116,7 +116,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 100,
-        animation: 'fadeInScale 0.2s ease',
+        animation: 'modalBackdropFade 0.15s ease',
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
@@ -134,7 +134,10 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           display: 'flex',
           flexDirection: 'column',
           gap: '20px',
+          animation: 'modalContentPop 0.15s cubic-bezier(0.16, 1, 0.3, 1)',
+          pointerEvents: 'auto',
         }}
+        onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       >
         {/* En-tête de la modale */}
