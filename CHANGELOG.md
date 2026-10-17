@@ -6,6 +6,13 @@ Le format est basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/)
 
 ---
 
+## [v1.0.1] - 2026-10-18
+
+### 🐛 Corrections
+- Résolution du problème d'écran bleu au démarrage : correction du chemin d'accès absolu vers `dist/index.html` dans le conteneur asar de production.
+
+---
+
 ## [v1.0.0] - 2026-10-17
 
 ### 🚀 Nouveautés

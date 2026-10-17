@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell } from 'electron';
 import path from 'node:path';
 import { registerIpcHandlers } from './ipc';
 
-process.env.DIST = path.join(__dirname, '../..');
+process.env.DIST = path.join(__dirname, '../../dist');
 process.env.VITE_PUBLIC = app.isPackaged
   ? process.env.DIST
   : path.join(process.env.DIST, '../public');
@@ -67,8 +67,9 @@ function createWindow(): void {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    const distPath = process.env.DIST || path.join(__dirname, '../..');
-    mainWindow.loadFile(path.join(distPath, 'index.html'));
+    mainWindow.loadFile(path.join(process.env.DIST, 'index.html')).catch((err) => {
+      console.error('Erreur chargement dist/index.html:', err);
+    });
   }
 }
 
