@@ -1,0 +1,41 @@
+{
+  "name": "enflash",
+  "version": "1.0.0",
+  "description": "Application de bureau d'apprentissage du vocabulaire anglais par flashcards et répétition espacée",
+  "main": "dist-electron/main/index.js",
+  "author": "Lilian <agentviande>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AgentViande/ENflash-.git"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build && electron-builder --dir",
+    "build:win": "tsc && vite build && electron-builder --win",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "release": "node scripts/publish.mjs"
+  },
+  "dependencies": {
+    "canvas-confetti": "^1.9.4",
+    "electron-updater": "^6.3.9",
+    "lucide-react": "^1.16.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3",
+    "vite-plugin-electron": "^0.29.0",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "vitest": "^2.1.8"
+  }
+}

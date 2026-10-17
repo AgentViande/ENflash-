@@ -1,0 +1,41 @@
+{
+  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  "appId": "com.agentviande.enflash",
+  "productName": "ENflash",
+  "copyright": "Copyright © 2026 Lilian",
+  "directories": {
+    "output": "release/${version}"
+  },
+  "files": [
+    "dist",
+    "dist-electron"
+  ],
+  "win": {
+    "target": [
+      {
+        "target": "nsis",
+        "arch": ["x64"]
+      }
+    ]
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true,
+    "createStartMenuShortcut": true,
+    "shortcutName": "ENflash"
+  },
+  "mac": {
+    "target": ["dmg", "zip"],
+    "category": "public.app-category.education"
+  },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "Education"
+  },
+  "publish": {
+    "provider": "github",
+    "owner": "AgentViande",
+    "repo": "ENflash-"
+  }
+}
