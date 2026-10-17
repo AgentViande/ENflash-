@@ -39,3 +39,25 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npx electron-builder --win --publish always
+
+      - name: Ensure release is published publicly
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $headers = @{
+            "Authorization" = "Bearer $env:GITHUB_TOKEN"
+            "Accept" = "application/vnd.github.v3+json"
+          }
+          $repo = "${{ github.repository }}"
+          $tag = "${{ github.ref_name }}"
+          Write-Host "Vérification du statut public de la release pour le tag $tag..."
+          $allReleases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Headers $headers
+          $rel = $allReleases | Where-Object { $_.tag_name -eq $tag }
+          if ($rel -and $rel.draft) {
+            Write-Host "Passage de la release $($rel.id) du statut draft au statut public..."
+            Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$($rel.id)" -Headers $headers -Method Patch -Body '{"draft":false}' -ContentType "application/json"
+            Write-Host "Release publiee publiquement avec succes !"
+          } else {
+            Write-Host "La release est deja publique."
+          }
