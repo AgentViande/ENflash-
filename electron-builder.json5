@@ -37,6 +37,7 @@
   "publish": {
     "provider": "github",
     "owner": "AgentViande",
-    "repo": "ENflash-"
+    "repo": "ENflash-",
+    "releaseType": "release"
   }
 }
