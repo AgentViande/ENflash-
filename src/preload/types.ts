@@ -1,4 +1,4 @@
-import { AppDatabase, Word } from '../shared/types';
+import { AppDatabase, Word, PiperVoiceModel, VoiceAccent } from '../shared/types';
 
 export interface UpdateInfo {
   version: string;
@@ -28,6 +28,20 @@ export interface ElectronAPI {
   installDownloadedUpdate: () => Promise<void>;
   onUpdateDownloadProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void;
   onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => () => void;
+
+  // Synthèse vocale & Audio en cascade
+  getAudioDataUrl: (params: { text: string; accent: VoiceAccent; preferredVoiceId?: string }) => Promise<{
+    success: boolean;
+    dataUrl?: string;
+    source: 'cache' | 'piper' | 'dictionary' | 'fallback';
+    error?: string;
+  }>;
+  getVoicesStatus: () => Promise<PiperVoiceModel[]>;
+  downloadVoice: (voiceId: string) => Promise<{ success: boolean; error?: string }>;
+  deleteVoice: (voiceId: string) => Promise<boolean>;
+  getCacheStats: () => Promise<{ count: number; totalSizeBytes: number; formattedSize: string }>;
+  clearCache: () => Promise<boolean>;
+  onVoiceDownloadProgress: (callback: (data: { voiceId: string; progress: number }) => void) => () => void;
 }
 
 declare global {

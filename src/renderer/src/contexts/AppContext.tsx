@@ -74,6 +74,8 @@ interface AppContextType {
   playSfx: (type: 'success' | 'wrong' | 'flip' | 'levelUp' | 'flame') => void;
   newBadgeUnlocked: string | null;
   clearNewBadge: () => void;
+  levelUpData: { oldLevel: number; newLevel: number } | null;
+  clearLevelUpData: () => void;
   // Rechargement base
   refreshDatabase: () => Promise<void>;
 }
@@ -84,6 +86,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [db, setDb] = useState<AppDatabase | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [newBadgeUnlocked, setNewBadgeUnlocked] = useState<string | null>(null);
+  const [levelUpData, setLevelUpData] = useState<{ oldLevel: number; newLevel: number } | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState<string>(() => getParisDayKey());
   const [currentWeekKey, setCurrentWeekKey] = useState<string>(() => getParisWeekKey());
 
@@ -213,6 +216,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (newLevelInfo.level > oldLevelInfo.level) {
         playSfx('levelUp');
         triggerConfetti();
+        setLevelUpData({ oldLevel: oldLevelInfo.level, newLevel: newLevelInfo.level });
       }
 
       const unlocked = [...currentDb.gamification.unlockedBadges];
@@ -549,6 +553,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         playSfx,
         newBadgeUnlocked,
         clearNewBadge,
+        levelUpData,
+        clearLevelUpData: () => setLevelUpData(null),
         refreshDatabase,
       }}
     >

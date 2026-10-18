@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Word, LeitnerBox } from '../../../shared/types';
-import { speakWord } from '../utils/audio';
+import { speakWord, speakText, preloadAudioList, replayLastAudio } from '../utils/audio';
 import { pickDailyTestWords } from '../../../shared/picker/weightedPicker';
 import { getTodayDateString } from '../../../shared/srs/leitner';
 import { Mascot } from '../assets/Mascot';
@@ -34,6 +34,7 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   const [activePlaylistId, setActivePlaylistId] = useState<string | null>(selectedPlaylistId);
   const [isDailyMode, setIsDailyMode] = useState<boolean>(initialDailyMode);
   const [isFreePracticeRun, setIsFreePracticeRun] = useState<boolean>(false);
+  const [isSlowMode, setIsSlowMode] = useState<boolean>(false);
 
   const [cards, setCards] = useState<Word[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -56,16 +57,25 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
 
     if (isDailyMode) {
       const todayOfficial = getTodayOfficialSession();
+      let loadedCards: Word[] = [];
       // Si déjà validé aujourd'hui : entraînement libre avec EXACTEMENT les mêmes cartes
       if (isDailyDoneToday && todayOfficial && todayOfficial.wordIds?.length > 0) {
         const sessionWords = todayOfficial.wordIds
           .map((id) => db.words.find((w) => w.id === id))
           .filter(Boolean) as Word[];
-        setCards(sessionWords.length > 0 ? sessionWords : pickDailyTestWords(db.words, 20, getTodayDateString()));
+        loadedCards = sessionWords.length > 0 ? sessionWords : pickDailyTestWords(db.words, 20, getTodayDateString());
       } else {
         // 20 cartes tirées de manière pondérée
-        const picked = pickDailyTestWords(db.words, 20, getTodayDateString());
-        setCards(picked);
+        loadedCards = pickDailyTestWords(db.words, 20, getTodayDateString());
+      }
+      setCards(loadedCards);
+      // Préchargement en arrière-plan des audios du test du jour pour éliminer toute latence
+      if (loadedCards.length > 0) {
+        preloadAudioList(
+          loadedCards.map((c) => c.english),
+          db.settings.voiceAccent,
+          db.settings.preferredVoiceId
+        );
       }
     } else if (activePlaylistId) {
       const playlist = db.playlists.find((p) => p.id === activePlaylistId);
@@ -101,18 +111,53 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   }, [prepareCards]);
 
   const currentCard: Word | undefined = cards[currentIndex];
+  const isFrenchOnFront = direction === 'fr_to_en';
+
+  // Prononciation audio du mot principal
+  const handlePronounce = useCallback(
+    (e?: React.MouseEvent, forceSlow?: boolean) => {
+      if (e) e.stopPropagation();
+      if (!currentCard || !db) return;
+      const slow = forceSlow !== undefined ? forceSlow : isSlowMode;
+      speakText(currentCard.english, {
+        accent: voiceAccent,
+        speed: db.settings.voiceSpeed || 1.0,
+        isSlow: slow,
+        preferredVoiceId: db.settings.preferredVoiceId,
+      });
+    },
+    [currentCard, db, voiceAccent, isSlowMode]
+  );
+
+  // Prononciation audio de la phrase d'exemple
+  const handlePronounceExample = useCallback(
+    (e?: React.MouseEvent, forceSlow?: boolean) => {
+      if (e) e.stopPropagation();
+      if (!currentCard || !currentCard.example || !db) return;
+      const slow = forceSlow !== undefined ? forceSlow : isSlowMode;
+      speakText(currentCard.example, {
+        accent: voiceAccent,
+        speed: db.settings.voiceSpeed || 1.0,
+        isSlow: slow,
+        preferredVoiceId: db.settings.preferredVoiceId,
+      });
+    },
+    [currentCard, db, voiceAccent, isSlowMode]
+  );
+
+  // Lecture automatique à l'affichage si face en anglais révélée
+  useEffect(() => {
+    if (!currentCard || sessionCompleted || !db?.settings.autoPronounce) return;
+    const isEnglishRevealed = (!isFrenchOnFront && !isFlipped) || (isFrenchOnFront && isFlipped);
+    if (isEnglishRevealed) {
+      handlePronounce();
+    }
+  }, [currentIndex, isFlipped, isFrenchOnFront, currentCard, sessionCompleted, db?.settings.autoPronounce, handlePronounce]);
 
   // Inversion globale du sens de lecture
   const toggleDirection = () => {
     const nextDir = direction === 'fr_to_en' ? 'en_to_fr' : 'fr_to_en';
     updateSettings({ cardDirection: nextDir });
-  };
-
-  // Prononciation audio
-  const handlePronounce = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (!currentCard) return;
-    speakWord(currentCard.english, voiceAccent);
   };
 
   // Retourner la carte
@@ -157,7 +202,7 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
     [currentCard, isDailyMode, dailyResults, currentIndex, cards.length, recordDailyTest, recordReview, playSfx, onFinishDaily]
   );
 
-  // Raccourcis clavier (Espace, Flèches, I)
+  // Raccourcis clavier (Espace, Flèches, I, P)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ignorer si l'utilisateur est dans un champ texte
@@ -178,12 +223,20 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
       } else if (e.key.toLowerCase() === 'i') {
         e.preventDefault();
         toggleDirection();
+      } else if (e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        const isEnglishRevealed = (!isFrenchOnFront && !isFlipped) || (isFrenchOnFront && isFlipped);
+        if (isEnglishRevealed) {
+          handlePronounce();
+        } else {
+          replayLastAudio();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleFlip, handleAnswer, isFlipped, sessionCompleted, currentCard]);
+  }, [handleFlip, handleAnswer, isFlipped, sessionCompleted, currentCard, isFrenchOnFront, handlePronounce]);
 
   // Couleurs de badges selon la boîte Leitner
   const getBoxBadge = (box: LeitnerBox) => {
@@ -383,7 +436,6 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
 
   // Côté affiché selon direction & flip
   const isFront = !isFlipped;
-  const isFrenchOnFront = direction === 'fr_to_en';
 
   const frontText = isFrenchOnFront ? currentCard.french : currentCard.english;
   const backText = isFrenchOnFront ? currentCard.english : currentCard.french;
@@ -590,25 +642,49 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
 
               {/* Bouton prononciation si le recto est en anglais */}
               {!isFrenchOnFront && (
-                <button
-                  onClick={handlePronounce}
-                  title="Écouter la prononciation"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    backgroundColor: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '999px',
-                    padding: '6px 14px',
-                    fontSize: '0.85rem',
-                    color: 'var(--color-primary)',
-                    fontWeight: 700,
-                  }}
-                >
-                  <Volume2 size={16} />
-                  <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <button
+                    onClick={(e) => handlePronounce(e)}
+                    title="Écouter la prononciation (Touche P)"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '999px',
+                      padding: '6px 14px',
+                      fontSize: '0.85rem',
+                      color: 'var(--color-primary)',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <Volume2 size={16} />
+                    <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSlowMode((prev) => !prev);
+                    }}
+                    title="Activer ou désactiver le mode ralenti (0.7x)"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: isSlowMode ? 'rgba(245, 158, 11, 0.2)' : 'var(--bg-secondary)',
+                      border: isSlowMode ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                      color: isSlowMode ? '#f59e0b' : 'var(--text-muted)',
+                      borderRadius: '999px',
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>🐢 Lent {isSlowMode ? '0.7x' : '1.0x'}</span>
+                  </button>
+                </div>
               )}
             </div>
 
@@ -691,41 +767,85 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
 
               {/* Bouton audio si le verso est en anglais */}
               {isFrenchOnFront && (
-                <button
-                  onClick={handlePronounce}
-                  title="Écouter la prononciation"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    backgroundColor: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-subtle)',
-                    borderRadius: '999px',
-                    padding: '6px 14px',
-                    fontSize: '0.85rem',
-                    color: 'var(--color-primary)',
-                    fontWeight: 700,
-                    marginBottom: '10px',
-                  }}
-                >
-                  <Volume2 size={16} />
-                  <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
-                </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  <button
+                    onClick={(e) => handlePronounce(e)}
+                    title="Écouter la prononciation (Touche P)"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '999px',
+                      padding: '6px 14px',
+                      fontSize: '0.85rem',
+                      color: 'var(--color-primary)',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <Volume2 size={16} />
+                    <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                  </button>
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsSlowMode((prev) => !prev);
+                    }}
+                    title="Activer ou désactiver le mode ralenti (0.7x)"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      backgroundColor: isSlowMode ? 'rgba(245, 158, 11, 0.2)' : 'var(--bg-secondary)',
+                      border: isSlowMode ? '1px solid #f59e0b' : '1px solid var(--border-subtle)',
+                      color: isSlowMode ? '#f59e0b' : 'var(--text-muted)',
+                      borderRadius: '999px',
+                      padding: '6px 12px',
+                      fontSize: '0.8rem',
+                      fontWeight: 700,
+                    }}
+                  >
+                    <span>🐢 Lent {isSlowMode ? '0.7x' : '1.0x'}</span>
+                  </button>
+                </div>
               )}
 
-              {/* Exemple de phrase si disponible */}
+              {/* Exemple de phrase si disponible avec second bouton d'écoute */}
               {currentCard.example && (
-                <p
-                  style={{
-                    fontSize: '0.95rem',
-                    fontStyle: 'italic',
-                    color: 'var(--text-secondary)',
-                    marginTop: '8px',
-                    padding: '0 20px',
-                  }}
-                >
-                  "{currentCard.example}"
-                </p>
+                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+                  <p
+                    style={{
+                      fontSize: '0.95rem',
+                      fontStyle: 'italic',
+                      color: 'var(--text-secondary)',
+                      padding: '0 20px',
+                      margin: 0,
+                    }}
+                  >
+                    "{currentCard.example}"
+                  </p>
+                  <button
+                    onClick={(e) => handlePronounceExample(e)}
+                    title="Écouter la phrase d'exemple"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '999px',
+                      padding: '4px 12px',
+                      fontSize: '0.75rem',
+                      color: 'var(--text-primary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Volume2 size={13} color="var(--color-primary)" />
+                    <span>Écouter la phrase d'exemple</span>
+                  </button>
+                </div>
               )}
             </div>
 

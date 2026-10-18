@@ -97,23 +97,190 @@ export function playStreakFlameSound(volume: number = 0.5): void {
   playTone(587.33, 'triangle', 0.25, volume * 0.4, 0.08);
 }
 
+import { VoiceAccent } from '../../../shared/types';
+
+export interface SpeakOptions {
+  accent?: VoiceAccent;
+  speed?: number; // 0.6 à 1.2
+  isSlow?: boolean; // Mode ralenti (0.7x)
+  preferredVoiceId?: string;
+}
+
+let currentAudioElement: HTMLAudioElement | null = null;
+let lastSpokenText: string | null = null;
+let lastSpokenOptions: SpeakOptions | null = null;
+
 /**
- * Synthèse vocale native pour prononciation en anglais US ou UK
+ * Sélectionne la meilleure voix anglaise installée sur le système
+ * Priorité aux voix Natural / Neural / Enhanced / Premium, jamais une voix non-anglaise
  */
-export function speakWord(text: string, accent: 'en-US' | 'en-GB' = 'en-US'): void {
-  if (!('speechSynthesis' in window)) return;
-
-  window.speechSynthesis.cancel(); // Stoppe toute lecture en cours
-
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.lang = accent;
-  utterance.rate = 0.9; // Rythme d'élocution naturel et clair
+export function getBestSystemEnglishVoice(accent: VoiceAccent = 'en-US'): SpeechSynthesisVoice | null {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
 
   const voices = window.speechSynthesis.getVoices();
-  const matchedVoice = voices.find((v) => v.lang === accent || v.lang.startsWith(accent.split('-')[0]));
-  if (matchedVoice) {
-    utterance.voice = matchedVoice;
+  if (!voices || voices.length === 0) return null;
+
+  // Filtrer uniquement les voix anglaises
+  const englishVoices = voices.filter(
+    (v) => v.lang.toLowerCase().startsWith('en') || v.lang.toLowerCase().startsWith('en_')
+  );
+
+  if (englishVoices.length === 0) return null;
+
+  const qualityKeywords = ['natural', 'neural', 'online', 'premium', 'enhanced'];
+
+  // 1. Voix haute qualité de l'accent exact demandé (ex: en-US ou en-GB)
+  const targetTag = accent.toLowerCase();
+  const highQualityExact = englishVoices.find(
+    (v) =>
+      v.lang.toLowerCase().replace('_', '-').startsWith(targetTag) &&
+      qualityKeywords.some((k) => v.name.toLowerCase().includes(k))
+  );
+  if (highQualityExact) return highQualityExact;
+
+  // 2. N'importe quelle voix haute qualité anglaise
+  const highQualityAny = englishVoices.find((v) =>
+    qualityKeywords.some((k) => v.name.toLowerCase().includes(k))
+  );
+  if (highQualityAny) return highQualityAny;
+
+  // 3. Voix de l'accent exact demandé
+  const exactAccent = englishVoices.find((v) =>
+    v.lang.toLowerCase().replace('_', '-').startsWith(targetTag)
+  );
+  if (exactAccent) return exactAccent;
+
+  // 4. Première voix anglaise trouvée
+  return englishVoices[0];
+}
+
+/**
+ * Synthèse vocale de dernier recours via la Web Speech API
+ */
+function speakSystemFallback(text: string, options: SpeakOptions): void {
+  if (!('speechSynthesis' in window)) return;
+
+  try {
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const accent = options.accent || 'en-US';
+    utterance.lang = accent;
+
+    const rate = options.isSlow
+      ? 0.7
+      : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
+    utterance.rate = rate;
+
+    const bestVoice = getBestSystemEnglishVoice(accent);
+    if (bestVoice) {
+      utterance.voice = bestVoice;
+    }
+
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.warn('Fallback système vocal :', err);
+  }
+}
+
+/**
+ * Système de prononciation audio en cascade :
+ * 1. Cache local disque
+ * 2. Voix neuronale hors ligne (Piper)
+ * 3. Enregistrement humain gratuit (Free Dictionary API)
+ * 4. Voix système naturelle filtrée
+ */
+export async function speakText(text: string, options: SpeakOptions = {}): Promise<void> {
+  if (!text || !text.trim()) return;
+
+  lastSpokenText = text;
+  lastSpokenOptions = options;
+
+  // Arrêter l'audio en cours s'il y en a un
+  if (currentAudioElement) {
+    try {
+      currentAudioElement.pause();
+      currentAudioElement.currentTime = 0;
+    } catch {}
+    currentAudioElement = null;
+  }
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.cancel();
   }
 
-  window.speechSynthesis.speak(utterance);
+  const accent = options.accent || 'en-US';
+
+  // Si on est dans Electron, tenter la cascade locale (Cache -> Piper -> Dictionary API)
+  if (typeof window !== 'undefined' && window.api?.getAudioDataUrl) {
+    try {
+      const res = await window.api.getAudioDataUrl({
+        text,
+        accent,
+        preferredVoiceId: options.preferredVoiceId,
+      });
+
+      if (res && res.success && res.dataUrl) {
+        const audio = new Audio(res.dataUrl);
+        currentAudioElement = audio;
+
+        const rate = options.isSlow
+          ? 0.7
+          : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
+        audio.playbackRate = rate;
+        audio.volume = 1.0;
+
+        await audio.play();
+        return;
+      }
+    } catch (err) {
+      // Échec silencieux, descente au palier système
+      console.warn('Cascade audio (Piper / Dictionary) indisponible, bascule système :', err);
+    }
+  }
+
+  // Palier 4 : Voix système en dernier recours
+  speakSystemFallback(text, options);
 }
+
+/**
+ * Raccourci pour réécouter le dernier son joué (Touche P)
+ */
+export function replayLastAudio(): void {
+  if (lastSpokenText) {
+    speakText(lastSpokenText, lastSpokenOptions || {});
+  }
+}
+
+/**
+ * Préchargement en arrière-plan d'une liste de mots (ex: pour le test quotidien)
+ */
+export function preloadAudioList(
+  words: string[],
+  accent: VoiceAccent = 'en-US',
+  preferredVoiceId?: string
+): void {
+  if (typeof window === 'undefined' || !window.api?.getAudioDataUrl) return;
+
+  // Préchargement asynchrone échelonné pour ne pas saturer le thread
+  words.forEach((word, index) => {
+    setTimeout(() => {
+      window.api.getAudioDataUrl({
+        text: word,
+        accent,
+        preferredVoiceId,
+      }).catch(() => {});
+    }, index * 200);
+  });
+}
+
+/**
+ * Rétro-compatibilité : prononcer un mot avec l'accent spécifié
+ */
+export function speakWord(
+  text: string,
+  accent: VoiceAccent = 'en-US',
+  options?: Partial<SpeakOptions>
+): void {
+  speakText(text, { accent, ...options });
+}
+

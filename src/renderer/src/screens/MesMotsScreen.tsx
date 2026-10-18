@@ -404,7 +404,12 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>{w.english}</span>
                         <button
-                          onClick={() => speakWord(w.english, db.settings.voiceAccent)}
+                          onClick={() =>
+                            speakWord(w.english, db.settings.voiceAccent, {
+                              speed: db.settings.voiceSpeed,
+                              preferredVoiceId: db.settings.preferredVoiceId,
+                            })
+                          }
                           title="Écouter la prononciation"
                           style={{
                             background: 'transparent',

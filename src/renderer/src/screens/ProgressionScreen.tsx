@@ -8,9 +8,12 @@ import {
   Sparkles,
   Calendar,
   CheckCircle,
+  Lock,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { calculateLevel, getLevelTitle, BADGE_DEFINITIONS } from '../../../shared/constants';
+import { LEVEL_RANKS, getLevelRank } from '../../../shared/gamification/levelRanks';
+import { LevelBadge } from '../components/LevelBadge';
 import { addDaysToDate, getParisDayKey } from '../../../shared/date/parisDate';
 
 export const ProgressionScreen: React.FC = () => {
@@ -68,88 +71,230 @@ export const ProgressionScreen: React.FC = () => {
       </div>
 
       {/* 1. CARTE GAMIFICATION : NIVEAU & EXPÉRIENCE */}
+      {(() => {
+        const rankInfo = getLevelRank(levelInfo.level);
+        return (
+          <div
+            style={{
+              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%)',
+              border: `1px solid ${rankInfo.tier.themeColor}55`,
+              borderRadius: 'var(--radius-xl)',
+              padding: '28px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+              boxShadow: `0 8px 24px ${rankInfo.tier.glowColor}`,
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+                <LevelBadge level={levelInfo.level} size={84} />
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                    <span
+                      style={{
+                        backgroundColor: `${rankInfo.tier.themeColor}22`,
+                        color: rankInfo.tier.themeColor,
+                        border: `1px solid ${rankInfo.tier.themeColor}55`,
+                        borderRadius: '6px',
+                        padding: '2px 10px',
+                        fontSize: '0.8rem',
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                      }}
+                    >
+                      Rang {rankInfo.tier.name} • {rankInfo.subStars}/4 étoiles
+                    </span>
+                    <span
+                      style={{
+                        backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                        color: 'var(--color-primary)',
+                        borderRadius: '6px',
+                        padding: '2px 8px',
+                        fontSize: '0.75rem',
+                        fontWeight: 800,
+                      }}
+                    >
+                      {gamification.xp} XP total
+                    </span>
+                  </div>
+                  <h3 style={{ fontSize: '1.5rem', fontWeight: 800, marginTop: '4px' }}>
+                    Niveau {levelInfo.level} • {levelTitle}
+                  </h3>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                    {rankInfo.tier.subtitle} — Plus que {levelInfo.nextLevelXp - levelInfo.currentXp} XP pour le niveau suivant !
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Barre de progression XP */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>Progression vers le niveau {levelInfo.level + 1}</span>
+                <span style={{ color: 'var(--color-primary)' }}>
+                  {levelInfo.currentXp} / {levelInfo.nextLevelXp} XP ({levelInfo.progressPercent} %)
+                </span>
+              </div>
+              <div
+                style={{
+                  width: '100%',
+                  height: '10px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderRadius: '5px',
+                  overflow: 'hidden',
+                  border: '1px solid var(--border-subtle)',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${levelInfo.progressPercent}%`,
+                    height: '100%',
+                    background: `linear-gradient(90deg, ${rankInfo.tier.themeColor}, #8b5cf6)`,
+                    borderRadius: '5px',
+                    transition: 'width 0.4s ease',
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* 2. GALERIE DES RANGS DE NIVEAU */}
       <div
         style={{
-          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(139, 92, 246, 0.15) 100%)',
+          backgroundColor: 'var(--bg-card)',
           border: '1px solid var(--border-subtle)',
           borderRadius: 'var(--radius-xl)',
-          padding: '28px',
+          padding: '24px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '18px',
+          gap: '20px',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <div
-              style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '16px',
-                background: 'linear-gradient(135deg, #6366f1, #8b5cf6)',
-                color: '#fff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontWeight: 800,
-                fontSize: '1.8rem',
-                boxShadow: 'var(--shadow-glow)',
-              }}
-            >
-              {levelInfo.level}
-            </div>
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h3 style={{ fontSize: '1.4rem', fontWeight: 800 }}>
-                  Niveau {levelInfo.level} • {levelTitle}
-                </h3>
-                <span
-                  style={{
-                    backgroundColor: 'rgba(99, 102, 241, 0.2)',
-                    color: 'var(--color-primary)',
-                    borderRadius: '6px',
-                    padding: '2px 8px',
-                    fontSize: '0.75rem',
-                    fontWeight: 800,
-                  }}
-                >
-                  {gamification.xp} XP total
-                </span>
-              </div>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                Plus que {levelInfo.nextLevelXp - levelInfo.currentXp} XP pour atteindre le niveau suivant !
-              </p>
-            </div>
+          <div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>
+              Galerie des 8 Rangs Évolutifs 🛡️
+            </h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Chaque palier de niveau transforme l'apparence, l'ornement et la richesse de votre badge.
+            </p>
           </div>
         </div>
 
-        {/* Barre de progression XP */}
-        <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>
-            <span style={{ color: 'var(--text-secondary)' }}>Progression vers le niveau {levelInfo.level + 1}</span>
-            <span style={{ color: 'var(--color-primary)' }}>
-              {levelInfo.currentXp} / {levelInfo.nextLevelXp} XP ({levelInfo.progressPercent} %)
-            </span>
-          </div>
-          <div
-            style={{
-              width: '100%',
-              height: '10px',
-              backgroundColor: 'var(--bg-secondary)',
-              borderRadius: '5px',
-              overflow: 'hidden',
-            }}
-          >
-            <div
-              style={{
-                width: `${levelInfo.progressPercent}%`,
-                height: '100%',
-                background: 'linear-gradient(90deg, #6366f1, #ec4899)',
-                borderRadius: '5px',
-                transition: 'width 0.4s ease',
-              }}
-            />
-          </div>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+            gap: '16px',
+          }}
+        >
+          {LEVEL_RANKS.map((r) => {
+            const isUnlocked = levelInfo.level >= r.minLevel;
+            const isCurrent = levelInfo.level >= r.minLevel && (r.maxLevel === Infinity || levelInfo.level <= r.maxLevel);
+            const displayLevel = isCurrent ? levelInfo.level : r.minLevel;
+
+            return (
+              <div
+                key={r.id}
+                style={{
+                  backgroundColor: isCurrent
+                    ? `${r.themeColor}15`
+                    : isUnlocked
+                    ? 'var(--bg-secondary)'
+                    : 'rgba(15, 23, 42, 0.4)',
+                  border: isCurrent
+                    ? `2px solid ${r.themeColor}`
+                    : isUnlocked
+                    ? '1px solid var(--border-subtle)'
+                    : '1px dashed var(--border-subtle)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '18px 14px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  textAlign: 'center',
+                  gap: '10px',
+                  position: 'relative',
+                  opacity: isUnlocked ? 1 : 0.6,
+                  transition: 'all 0.2s ease',
+                }}
+              >
+                {/* Badge Actuel ou Verrouillé */}
+                <div style={{ position: 'relative' }}>
+                  <LevelBadge
+                    level={displayLevel}
+                    size={72}
+                    silhouette={!isUnlocked}
+                    showSubProgress={isUnlocked}
+                  />
+                  {!isUnlocked && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        bottom: '-4px',
+                        right: '-4px',
+                        backgroundColor: '#0f172a',
+                        border: '1px solid #475569',
+                        borderRadius: '999px',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: '#94a3b8',
+                      }}
+                    >
+                      <Lock size={12} />
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                    <h4 style={{ fontSize: '1.05rem', fontWeight: 800, color: isUnlocked ? r.themeColor : 'var(--text-muted)' }}>
+                      {r.name}
+                    </h4>
+                    {isCurrent && (
+                      <span
+                        style={{
+                          backgroundColor: r.themeColor,
+                          color: '#fff',
+                          borderRadius: '4px',
+                          padding: '1px 6px',
+                          fontSize: '0.65rem',
+                          fontWeight: 800,
+                          textTransform: 'uppercase',
+                        }}
+                      >
+                        Actuel
+                      </span>
+                    )}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, marginTop: '2px' }}>
+                    {r.maxLevel === Infinity ? `Niveau ${r.minLevel}+` : `Niveaux ${r.minLevel} à ${r.maxLevel}`}
+                  </div>
+                </div>
+
+                <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: 1.3, margin: 0 }}>
+                  {r.subtitle}
+                </p>
+
+                <div style={{ marginTop: 'auto', paddingTop: '4px' }}>
+                  {isUnlocked ? (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--color-success)', fontWeight: 700 }}>
+                      Obtenu ✔️
+                    </span>
+                  ) : (
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 700 }}>
+                      Requis : Niveau {r.minLevel}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
 

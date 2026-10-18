@@ -15,6 +15,9 @@ import { useApp } from '../contexts/AppContext';
 import { Mascot } from '../assets/Mascot';
 import { getParisDayKey, getMsUntilNextParisMidnight, formatCountdown } from '../../../shared/date/parisDate';
 import { ScreenTab } from '../components/Sidebar';
+import { calculateLevel, getLevelTitle } from '../../../shared/constants';
+import { getLevelRank } from '../../../shared/gamification/levelRanks';
+import { LevelBadge } from '../components/LevelBadge';
 
 interface AccueilScreenProps {
   onNavigate: (tab: ScreenTab) => void;
@@ -105,6 +108,97 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
           <Mascot mood={isDailyDoneToday ? 'celebrate' : 'happy'} size={110} className="animate-float" />
         </div>
       </div>
+
+      {/* Rang et Niveau Évolutif (Grande carte avec jauge d'XP) */}
+      {(() => {
+        const levelInfo = calculateLevel(db.gamification.xp);
+        const rankInfo = getLevelRank(levelInfo.level);
+        const levelTitle = getLevelTitle(levelInfo.level);
+        return (
+          <div
+            onClick={() => onNavigate('progression')}
+            style={{
+              background: 'var(--bg-card)',
+              border: `1px solid ${rankInfo.tier.themeColor}40`,
+              borderRadius: 'var(--radius-xl)',
+              padding: '20px 28px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: '24px',
+              boxShadow: `0 4px 20px ${rankInfo.tier.glowColor}`,
+              cursor: 'pointer',
+              transition: 'transform 0.2s ease, border-color 0.2s ease',
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-2px)';
+              e.currentTarget.style.borderColor = rankInfo.tier.themeColor;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.borderColor = `${rankInfo.tier.themeColor}40`;
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '20px', flex: 1 }}>
+              <LevelBadge level={levelInfo.level} size={80} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                  <span
+                    style={{
+                      backgroundColor: `${rankInfo.tier.themeColor}22`,
+                      color: rankInfo.tier.themeColor,
+                      border: `1px solid ${rankInfo.tier.themeColor}55`,
+                      padding: '2px 10px',
+                      borderRadius: '999px',
+                      fontSize: '0.8rem',
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    Rang {rankInfo.tier.name} • {rankInfo.subStars}/4 étoiles
+                  </span>
+                  <span style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                    {rankInfo.tier.subtitle}
+                  </span>
+                </div>
+                <h3 style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                  Niveau {levelInfo.level} — {levelTitle}
+                </h3>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '2px' }}>
+                  <div
+                    style={{
+                      flex: 1,
+                      height: '10px',
+                      background: 'var(--bg-secondary)',
+                      borderRadius: '5px',
+                      overflow: 'hidden',
+                      border: '1px solid var(--border-subtle)',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${levelInfo.progressPercent}%`,
+                        height: '100%',
+                        background: `linear-gradient(90deg, ${rankInfo.tier.themeColor}, #8b5cf6)`,
+                        borderRadius: '5px',
+                        transition: 'width 0.5s ease',
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', whiteSpace: 'nowrap' }}>
+                    {levelInfo.currentXp} / {levelInfo.nextLevelXp} XP ({levelInfo.progressPercent}%)
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--color-primary)', fontWeight: 700, fontSize: '0.85rem' }}>
+              <span>Galerie des Rangs</span>
+              <ArrowRight size={18} />
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Cartes Clés : Défi du Jour & Évaluation Hebdo */}
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '20px' }}>

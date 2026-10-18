@@ -230,3 +230,76 @@ input:focus, textarea:focus, select:focus {
     transform: scale(1);
   }
 }
+
+/* Animations des Badges de Niveau Évolutifs */
+@keyframes badgeFloat {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes badgeShimmer {
+  0% {
+    filter: drop-shadow(0 4px 8px var(--glow-color, rgba(99, 102, 241, 0.4)));
+  }
+  50% {
+    filter: drop-shadow(0 6px 16px var(--glow-color, rgba(99, 102, 241, 0.7))) brightness(1.08);
+  }
+  100% {
+    filter: drop-shadow(0 4px 8px var(--glow-color, rgba(99, 102, 241, 0.4)));
+  }
+}
+
+@keyframes badgeSpinSlow {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.level-badge-container {
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.level-badge-container:hover {
+  transform: scale(1.06);
+}
+
+.level-badge-container.badge-animated.platine,
+.level-badge-container.badge-animated.diamant,
+.level-badge-container.badge-animated.maitre,
+.level-badge-container.badge-animated.legende {
+  animation: badgeFloat 4s ease-in-out infinite, badgeShimmer 3s ease-in-out infinite;
+}
+
+.level-badge-container.badge-animated.bronze,
+.level-badge-container.badge-animated.argent,
+.level-badge-container.badge-animated.or {
+  animation: badgeFloat 5s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .level-badge-container,
+  .level-badge-container.badge-animated.platine,
+  .level-badge-container.badge-animated.diamant,
+  .level-badge-container.badge-animated.maitre,
+  .level-badge-container.badge-animated.legende,
+  .level-badge-container.badge-animated.bronze,
+  .level-badge-container.badge-animated.argent,
+  .level-badge-container.badge-animated.or,
+  .animate-float,
+  .animate-flame {
+    animation: none !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}
+

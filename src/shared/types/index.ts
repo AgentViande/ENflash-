@@ -117,10 +117,26 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 export type CardDirection = 'fr_to_en' | 'en_to_fr';
 export type VoiceAccent = 'en-US' | 'en-GB';
 
+export interface PiperVoiceModel {
+  id: string;
+  name: string;
+  accent: VoiceAccent;
+  gender: 'female' | 'male';
+  sizeBytes: number;
+  sizeFormatted: string;
+  modelUrl: string;
+  configUrl: string;
+  isDownloaded: boolean;
+  downloadProgress?: number;
+}
+
 export interface AppSettings {
   theme: ThemeMode;
   cardDirection: CardDirection;
   voiceAccent: VoiceAccent;
+  voiceSpeed: number; // 0.6 à 1.2
+  autoPronounce: boolean;
+  preferredVoiceId?: string;
   soundEffects: boolean;
   soundVolume: number; // 0 à 1
   dailyReminder: boolean;

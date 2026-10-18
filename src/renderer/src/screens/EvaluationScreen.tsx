@@ -10,12 +10,14 @@ import {
   Sparkles,
   History,
   RotateCcw,
+  Volume2,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Word, WeeklyAnswer, LevenshteinStatus } from '../../../shared/types';
 import { evaluateAnswer } from '../../../shared/levenshtein/correction';
 import { Mascot } from '../assets/Mascot';
 import { shuffleArray } from '../../../shared/picker/weightedPicker';
+import { speakText, preloadAudioList } from '../utils/audio';
 
 export const EvaluationScreen: React.FC = () => {
   const { db, recordWeeklyEvaluation, playSfx, isWeeklyDoneThisWeek } = useApp();
@@ -62,6 +64,15 @@ export const EvaluationScreen: React.FC = () => {
     setCurrentAnswerResult(null);
     setTestCompleted(false);
     setInTest(true);
+
+    // Préchargement en arrière-plan des audios de l'évaluation
+    if (shuffled.length > 0) {
+      preloadAudioList(
+        shuffled.map((w) => w.english),
+        db.settings.voiceAccent,
+        db.settings.preferredVoiceId
+      );
+    }
   };
 
   const handleValidateAnswer = () => {
@@ -112,6 +123,13 @@ export const EvaluationScreen: React.FC = () => {
       } else {
         handleNextWord();
       }
+    } else if (e.key.toLowerCase() === 'p' && currentAnswerResult) {
+      e.preventDefault();
+      speakText(currentAnswerResult.expected, {
+        accent: db.settings.voiceAccent,
+        speed: db.settings.voiceSpeed || 1.0,
+        preferredVoiceId: db.settings.preferredVoiceId,
+      });
     }
   };
 
@@ -273,6 +291,71 @@ export const EvaluationScreen: React.FC = () => {
                 Réponse attendue :{' '}
                 <strong style={{ color: 'var(--color-primary)' }}>{currentAnswerResult.expected}</strong>
               </div>
+
+              {/* Bouton audio pour écouter la prononciation correcte (après réponse seulement) */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
+                <button
+                  type="button"
+                  onClick={() =>
+                    speakText(currentAnswerResult.expected, {
+                      accent: db.settings.voiceAccent,
+                      speed: db.settings.voiceSpeed || 1.0,
+                      preferredVoiceId: db.settings.preferredVoiceId,
+                    })
+                  }
+                  title="Écouter la prononciation anglaise (Touche P)"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '999px',
+                    padding: '6px 14px',
+                    fontSize: '0.8rem',
+                    color: 'var(--color-primary)',
+                    fontWeight: 700,
+                  }}
+                >
+                  <Volume2 size={15} />
+                  <span>Écouter ({db.settings.voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                </button>
+
+                {currentWord.example && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      speakText(currentWord.example!, {
+                        accent: db.settings.voiceAccent,
+                        speed: db.settings.voiceSpeed || 1.0,
+                        preferredVoiceId: db.settings.preferredVoiceId,
+                      })
+                    }
+                    title="Écouter la phrase d'exemple"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      borderRadius: '999px',
+                      padding: '6px 14px',
+                      fontSize: '0.8rem',
+                      color: 'var(--text-secondary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    <Volume2 size={14} color="var(--color-primary)" />
+                    <span>Écouter l'exemple</span>
+                  </button>
+                )}
+              </div>
+
+              {currentWord.example && (
+                <div style={{ fontSize: '0.85rem', fontStyle: 'italic', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  "{currentWord.example}"
+                </div>
+              )}
             </div>
           )}
         </div>

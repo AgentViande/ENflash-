@@ -2,6 +2,8 @@ import React from 'react';
 import { Flame, Shield, Sun, Moon, Plus, HelpCircle, Sparkles } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { calculateLevel, getLevelTitle } from '../../../shared/constants';
+import { getLevelRank } from '../../../shared/gamification/levelRanks';
+import { LevelBadge } from './LevelBadge';
 
 interface HeaderProps {
   onOpenQuickAdd: () => void;
@@ -117,60 +119,50 @@ export const Header: React.FC<HeaderProps> = ({ onOpenQuickAdd, onOpenShortcuts 
         </div>
 
         {/* Niveau & Jauge d'XP */}
-        <div
-          title={`Niveau ${levelInfo.level} (${levelTitle}) : ${levelInfo.currentXp} / ${levelInfo.nextLevelXp} XP`}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '12px',
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-lg)',
-            padding: '6px 16px',
-          }}
-        >
-          <div
-            style={{
-              width: '28px',
-              height: '28px',
-              borderRadius: '8px',
-              background: 'linear-gradient(135deg, #10b981, #059669)',
-              color: '#fff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontWeight: 800,
-              fontSize: '0.85rem',
-            }}
-          >
-            {levelInfo.level}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '90px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700 }}>
-              <span style={{ color: 'var(--text-secondary)' }}>{levelTitle}</span>
-              <span style={{ color: 'var(--color-primary)' }}>{levelInfo.progressPercent}%</span>
-            </div>
+        {(() => {
+          const rankInfo = getLevelRank(levelInfo.level);
+          return (
             <div
+              title={`Niveau ${levelInfo.level} • Rang ${rankInfo.tier.name} (${levelTitle}) : ${levelInfo.currentXp} / ${levelInfo.nextLevelXp} XP`}
               style={{
-                width: '100%',
-                height: '6px',
-                background: 'var(--border-subtle)',
-                borderRadius: '3px',
-                overflow: 'hidden',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-lg)',
+                padding: '6px 14px',
               }}
             >
-              <div
-                style={{
-                  width: `${levelInfo.progressPercent}%`,
-                  height: '100%',
-                  background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
-                  borderRadius: '3px',
-                  transition: 'width 0.4s ease',
-                }}
-              />
+              <LevelBadge level={levelInfo.level} size={32} showSubProgress={false} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', width: '95px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', fontWeight: 700 }}>
+                  <span style={{ color: rankInfo.tier.themeColor }}>{rankInfo.tier.name}</span>
+                  <span style={{ color: 'var(--color-primary)' }}>{levelInfo.progressPercent}%</span>
+                </div>
+                <div
+                  style={{
+                    width: '100%',
+                    height: '6px',
+                    background: 'var(--border-subtle)',
+                    borderRadius: '3px',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <div
+                    style={{
+                      width: `${levelInfo.progressPercent}%`,
+                      height: '100%',
+                      background: 'linear-gradient(90deg, #6366f1, #8b5cf6)',
+                      borderRadius: '3px',
+                      transition: 'width 0.4s ease',
+                    }}
+                  />
+                </div>
+              </div>
             </div>
-          </div>
-        </div>
+          );
+        })()}
 
         {/* Bouton d'ajout rapide (Ctrl+N) */}
         <button

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { getDatabaseStore } from '../storage/store';
 import { getAppUpdater } from '../updater';
 import { sendDesktopNotification, startReminderScheduler } from '../notifications';
+import { getVoiceManager } from '../audio/voiceManager';
 import { AppDatabase, Word } from '../../shared/types';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
@@ -185,5 +186,36 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('updater:install', async () => {
     updater.installUpdate();
+  });
+
+  // --- Synthèse vocale & Audio en cascade ---
+  const voiceMgr = getVoiceManager();
+  voiceMgr.setWindow(mainWindow);
+
+  ipcMain.handle(
+    'audio:getAudioDataUrl',
+    async (_event, { text, accent, preferredVoiceId }: { text: string; accent: any; preferredVoiceId?: string }) => {
+      return voiceMgr.getAudioDataUrl(text, accent, preferredVoiceId);
+    }
+  );
+
+  ipcMain.handle('audio:getVoicesStatus', async () => {
+    return voiceMgr.getVoicesStatus();
+  });
+
+  ipcMain.handle('audio:downloadVoice', async (_event, voiceId: string) => {
+    return voiceMgr.downloadVoice(voiceId);
+  });
+
+  ipcMain.handle('audio:deleteVoice', async (_event, voiceId: string) => {
+    return voiceMgr.deleteVoice(voiceId);
+  });
+
+  ipcMain.handle('audio:getCacheStats', async () => {
+    return voiceMgr.getCacheStats();
+  });
+
+  ipcMain.handle('audio:clearCache', async () => {
+    return voiceMgr.clearCache();
   });
 }

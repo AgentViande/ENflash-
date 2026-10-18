@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Settings,
   Volume2,
@@ -12,10 +12,16 @@ import {
   CheckCircle2,
   AlertCircle,
   ExternalLink,
+  Trash2,
+  Play,
+  Check,
+  Info,
+  ShieldCheck,
+  Sliders,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { VoiceAccent, ThemeMode } from '../../../shared/types';
-import { speakWord } from '../utils/audio';
+import { VoiceAccent, ThemeMode, PiperVoiceModel } from '../../../shared/types';
+import { speakWord, speakText } from '../utils/audio';
 import { UpdateInfo } from '../../../preload/types';
 
 interface ParametresScreenProps {
@@ -30,18 +36,95 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
+  // Voix neuronales & Cache
+  const [piperVoices, setPiperVoices] = useState<PiperVoiceModel[]>([]);
+  const [downloadingVoiceId, setDownloadingVoiceId] = useState<string | null>(null);
+  const [voiceProgress, setVoiceProgress] = useState<Record<string, number>>({});
+  const [cacheStats, setCacheStats] = useState<{ count: number; formattedSize: string }>({
+    count: 0,
+    formattedSize: '0 Mo',
+  });
+
+  const loadVoicesAndCache = useCallback(async () => {
+    if (window.api?.getVoicesStatus) {
+      try {
+        const voices = await window.api.getVoicesStatus();
+        setPiperVoices(voices);
+      } catch {}
+    }
+    if (window.api?.getCacheStats) {
+      try {
+        const stats = await window.api.getCacheStats();
+        setCacheStats({ count: stats.count, formattedSize: stats.formattedSize });
+      } catch {}
+    }
+  }, []);
+
   useEffect(() => {
     if (window.api) {
       window.api.getAppVersion().then(setAppVersion);
+      loadVoicesAndCache();
+
+      const unsubscribe = window.api.onVoiceDownloadProgress?.(({ voiceId, progress }) => {
+        setVoiceProgress((prev) => ({ ...prev, [voiceId]: progress }));
+        if (progress >= 100) {
+          setDownloadingVoiceId(null);
+          loadVoicesAndCache();
+        }
+      });
+
+      return () => {
+        if (unsubscribe) unsubscribe();
+      };
     }
-  }, []);
+  }, [loadVoicesAndCache]);
 
   if (!db) return null;
   const { settings } = db;
 
-  // Test de prononciation vocale
-  const handleTestVoice = (accent: VoiceAccent) => {
-    speakWord('Hello! Welcome to ENflash, your English flashcards application.', accent);
+  // Test d'une voix spécifique
+  const handleTestVoiceSample = (voiceId: string, accent: VoiceAccent) => {
+    speakText('Hello! Welcome to ENflash, your English flashcards application.', {
+      accent,
+      preferredVoiceId: voiceId,
+      speed: settings.voiceSpeed || 1.0,
+    });
+  };
+
+  // Télécharger une voix Piper
+  const handleDownloadVoice = async (voiceId: string) => {
+    if (!window.api?.downloadVoice) return;
+    setDownloadingVoiceId(voiceId);
+    setVoiceProgress((prev) => ({ ...prev, [voiceId]: 5 }));
+    try {
+      const res = await window.api.downloadVoice(voiceId);
+      if (res.success) {
+        await loadVoicesAndCache();
+      } else if (res.error) {
+        alert('Erreur lors du téléchargement : ' + res.error);
+      }
+    } catch (err: any) {
+      alert('Erreur : ' + err.message);
+    } finally {
+      setDownloadingVoiceId(null);
+    }
+  };
+
+  // Supprimer une voix Piper
+  const handleDeleteVoice = async (voiceId: string) => {
+    if (!window.api?.deleteVoice) return;
+    if (!window.confirm('Voulez-vous supprimer ce modèle de voix pour libérer de l’espace ?')) return;
+    await window.api.deleteVoice(voiceId);
+    await loadVoicesAndCache();
+  };
+
+  // Vider le cache audio
+  const handleClearCache = async () => {
+    if (!window.api?.clearCache) return;
+    await window.api.clearCache();
+    await loadVoicesAndCache();
+    setBackupMessage('Cache audio vidé avec succès !');
+    setTimeout(() => setBackupMessage(null), 3000);
   };
 
   // Test du son
@@ -215,7 +298,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         </div>
       </div>
 
-      {/* 2. AUDIO & VOIX */}
+      {/* 2. AUDIO & VOIX DE HAUTE QUALITÉ */}
       <div
         style={{
           backgroundColor: 'var(--bg-card)',
@@ -224,32 +307,40 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           padding: '24px',
           display: 'flex',
           flexDirection: 'column',
-          gap: '20px',
+          gap: '24px',
         }}
       >
-        <h3 style={{ fontSize: '1.15rem', fontWeight: 800 }}>Audio & Synthèse vocale</h3>
-
-        {/* Accent vocal */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Accent anglais de prononciation</div>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>Synthèse vocale & Qualité des voix 🎙️</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              Architecture en cascade : Cache local ➔ Voix neuronales Piper ➔ Enregistrements réels ➔ Voix système
+            </p>
+          </div>
+        </div>
+
+        {/* 2.1 Accent vocal */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Accent d'apprentissage</div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Utilisé par la synthèse vocale pour prononcer les mots et exemples
+              Détermine l'accent prioritaire pour les cartes, les tests et le dictionnaire
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
             <select
               value={settings.voiceAccent}
               onChange={(e) => updateSettings({ voiceAccent: e.target.value as VoiceAccent })}
-              style={{ fontSize: '0.9rem' }}
+              style={{ fontSize: '0.9rem', fontWeight: 600 }}
             >
               <option value="en-US">Anglais américain (US)</option>
               <option value="en-GB">Anglais britannique (UK)</option>
             </select>
+
             <button
-              onClick={() => handleTestVoice(settings.voiceAccent)}
-              title="Tester la voix"
+              onClick={() => handleTestVoiceSample(settings.preferredVoiceId || '', settings.voiceAccent)}
+              title="Tester la prononciation avec cet accent"
               style={{
                 background: 'var(--bg-secondary)',
                 border: '1px solid var(--border-subtle)',
@@ -269,7 +360,320 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </div>
         </div>
 
-        {/* Effets sonores du jeu */}
+        {/* 2.2 Vitesse de lecture (0.6x à 1.2x) */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+              Vitesse de prononciation normale :{' '}
+              <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>
+                {(settings.voiceSpeed || 1.0).toFixed(1)}x
+              </span>
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Ajustez l'élocution (un bouton "Mode lent 0.7x" est aussi disponible directement sur les cartes)
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>0.6x</span>
+            <input
+              type="range"
+              min="0.6"
+              max="1.2"
+              step="0.05"
+              value={settings.voiceSpeed || 1.0}
+              onChange={(e) => updateSettings({ voiceSpeed: parseFloat(e.target.value) })}
+              style={{ width: '130px', accentColor: 'var(--color-primary)' }}
+            />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>1.2x</span>
+          </div>
+        </div>
+
+        {/* 2.3 Lecture automatique à l'affichage */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Lecture automatique de l'audio</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Prononce automatiquement le mot dès qu'une face en anglais est affichée
+            </div>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!settings.autoPronounce}
+              onChange={(e) => updateSettings({ autoPronounce: e.target.checked })}
+              style={{ accentColor: 'var(--color-primary)' }}
+            />
+            <span style={{ fontSize: '0.9rem', fontWeight: 600 }}>Activer</span>
+          </label>
+        </div>
+
+        {/* 2.4 Voix neuronales Piper (Moteur local haute fidélité) */}
+        <div
+          style={{
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <h4 style={{ fontSize: '1rem', fontWeight: 800 }}>
+                  Voix neuronales hors ligne (Piper TTS)
+                </h4>
+                <span
+                  style={{
+                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                    color: '#10b981',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '0.7rem',
+                    fontWeight: 800,
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Sans connexion requise
+                </span>
+              </div>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Téléchargez les voix de votre choix à la demande pour garder l'installateur léger
+              </p>
+            </div>
+
+            {/* Voix préférée */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                Voix active :
+              </span>
+              <select
+                value={settings.preferredVoiceId || 'auto'}
+                onChange={(e) => updateSettings({ preferredVoiceId: e.target.value })}
+                style={{ fontSize: '0.85rem' }}
+              >
+                <option value="auto">Automatique selon l'accent</option>
+                {piperVoices
+                  .filter((v) => v.isDownloaded)
+                  .map((v) => (
+                    <option key={v.id} value={v.id}>
+                      {v.name}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Liste des 4 modèles */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            {piperVoices.map((v) => {
+              const isDownloading = downloadingVoiceId === v.id;
+              const progress = voiceProgress[v.id] || 0;
+
+              return (
+                <div
+                  key={v.id}
+                  style={{
+                    backgroundColor: 'var(--bg-card)',
+                    border: v.isDownloaded
+                      ? '1px solid rgba(16, 185, 129, 0.4)'
+                      : '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                        {v.name}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {v.accent === 'en-US' ? 'Accent américain' : 'Accent britannique'} • {v.sizeFormatted}
+                      </div>
+                    </div>
+
+                    {v.isDownloaded ? (
+                      <span
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          color: '#10b981',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                        }}
+                      >
+                        <Check size={14} />
+                        Installée
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Non installée
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Barre de progression si en cours de téléchargement */}
+                  {isDownloading && (
+                    <div style={{ width: '100%' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px' }}>
+                        <span>Téléchargement...</span>
+                        <span>{progress}%</span>
+                      </div>
+                      <div
+                        style={{
+                          height: '6px',
+                          backgroundColor: 'var(--border-subtle)',
+                          borderRadius: '3px',
+                          overflow: 'hidden',
+                        }}
+                      >
+                        <div
+                          style={{
+                            width: `${progress}%`,
+                            height: '100%',
+                            backgroundColor: 'var(--color-primary)',
+                            borderRadius: '3px',
+                            transition: 'width 0.2s ease',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions par voix */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                    <button
+                      onClick={() => handleTestVoiceSample(v.id, v.accent)}
+                      style={{
+                        flex: 1,
+                        background: 'var(--bg-secondary)',
+                        border: '1px solid var(--border-subtle)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '6px 10px',
+                        fontSize: '0.8rem',
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        color: 'var(--text-primary)',
+                      }}
+                    >
+                      <Play size={13} fill="currentColor" />
+                      <span>Écouter un exemple</span>
+                    </button>
+
+                    {v.isDownloaded ? (
+                      <button
+                        onClick={() => handleDeleteVoice(v.id)}
+                        title="Supprimer la voix pour libérer l'espace disque"
+                        style={{
+                          background: 'rgba(239, 68, 68, 0.1)',
+                          border: '1px solid rgba(239, 68, 68, 0.3)',
+                          color: '#ef4444',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '6px 10px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleDownloadVoice(v.id)}
+                        disabled={isDownloading}
+                        style={{
+                          background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                          color: '#fff',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '6px 12px',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                        }}
+                      >
+                        <Download size={13} />
+                        <span>Télécharger</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Espace disque & Gestion du cache audio */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              paddingTop: '8px',
+              borderTop: '1px solid var(--border-subtle)',
+            }}
+          >
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+              Cache local des audios générés : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers mémorisés)
+            </div>
+
+            <button
+              onClick={handleClearCache}
+              style={{
+                background: 'transparent',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-muted)',
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+              }}
+            >
+              Vider le cache audio
+            </button>
+          </div>
+        </div>
+
+        {/* Message d'aide si aucune voix neuronale Piper n'est encore installée */}
+        {piperVoices.every((v) => !v.isDownloaded) && (
+          <div
+            style={{
+              backgroundColor: 'rgba(99, 102, 241, 0.08)',
+              border: '1px solid rgba(99, 102, 241, 0.3)',
+              borderRadius: 'var(--radius-md)',
+              padding: '14px 16px',
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: '12px',
+              fontSize: '0.85rem',
+              color: 'var(--text-secondary)',
+              lineHeight: 1.4,
+            }}
+          >
+            <Info size={18} color="var(--color-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
+            <div>
+              <strong style={{ color: 'var(--text-primary)' }}>Astuce pour une prononciation optimale :</strong>
+              <br />
+              Tant qu'aucune voix neuronale n'est téléchargée, ENflash joue gratuitement les enregistrements humains du dictionnaire pour chaque mot individuel, ou la meilleure voix anglaise naturelle de votre système.
+              Sur Windows, vous pouvez aussi ajouter des voix anglaises naturelles gratuites via :{' '}
+              <em>Paramètres Windows &gt; Heure et langue &gt; Voix &gt; Ajouter des voix</em>.
+            </div>
+          </div>
+        )}
+
+        {/* 2.5 Bruitages et effets sonores ludiques */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Effets sonores (bruitages ludiques)</div>
@@ -486,6 +890,42 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
             {updateMessage}
           </div>
         )}
+      </div>
+
+      {/* 6. CRÉDITS ET LICENCES DES VOIX ET DONNÉES */}
+      <div
+        style={{
+          backgroundColor: 'var(--bg-card)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-xl)',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '14px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <ShieldCheck size={20} color="var(--color-primary)" />
+          <h3 style={{ fontSize: '1.15rem', fontWeight: 800 }}>Crédits, sources et licences libres</h3>
+        </div>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+          ENflash privilégie exclusivement des technologies ouvertes, gratuites et respectueuses de vos données personnelles :
+        </p>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>Piper TTS :</strong> Moteur de synthèse neuronale locale ultra-rapide par Michael Hansen / Rhasspy (Licence MIT).
+          </div>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>Modèles vocaux neuronaux :</strong> Jeux de données Lessac, Ryan, Alba et Alan (Licences libres Domaine Public / ODbL / MIT).
+          </div>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>Prononciations humaines du dictionnaire :</strong> Free Dictionary API & contributeurs Wikimedia Commons (Licences Creative Commons BY-SA).
+          </div>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>Effets sonores :</strong> Synthèse procédurale originale temps réel via la Web Audio API (100% libre de droit).
+          </div>
+        </div>
       </div>
     </div>
   );

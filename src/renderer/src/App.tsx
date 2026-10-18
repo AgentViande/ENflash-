@@ -12,13 +12,14 @@ import { ParametresScreen } from './screens/ParametresScreen';
 import { QuickAddModal } from './components/QuickAddModal';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 import { BadgeUnlockModal } from './components/BadgeUnlockModal';
+import { LevelUpModal } from './components/LevelUpModal';
 import { UpdateModal } from './components/UpdateModal';
 import { WhatsNewModal } from './components/WhatsNewModal';
 import { useApp } from './contexts/AppContext';
 import { UpdateInfo } from '../../preload/types';
 
 export const App: React.FC = () => {
-  const { db, loading, newBadgeUnlocked, clearNewBadge, updateSettings } = useApp();
+  const { db, loading, newBadgeUnlocked, clearNewBadge, levelUpData, clearLevelUpData, updateSettings } = useApp();
 
   const [currentTab, setCurrentTab] = useState<ScreenTab>('accueil');
   const [selectedPlaylistForStudy, setSelectedPlaylistForStudy] = useState<string | null>(null);
@@ -174,6 +175,11 @@ export const App: React.FC = () => {
       <BadgeUnlockModal
         badgeId={newBadgeUnlocked}
         onClose={clearNewBadge}
+      />
+
+      <LevelUpModal
+        data={levelUpData}
+        onClose={clearLevelUpData}
       />
 
       <UpdateModal
