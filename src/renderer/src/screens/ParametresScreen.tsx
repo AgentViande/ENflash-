@@ -20,11 +20,13 @@ import {
   Sliders,
   Wrench,
   Headphones,
+  FolderOpen,
+  AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { VoiceAccent, ThemeMode, AudioEngineStatus } from '../../../shared/types';
 import { AVAILABLE_KOKORO_VOICES, getDefaultVoiceForAccent } from '../../../shared/audio/kokoroVoices';
-import { speakWord, speakText, runVoiceComparison } from '../utils/audio';
+import { speakWord, speakText, runVoiceComparison, stopAllAudio } from '../utils/audio';
 import { UpdateInfo } from '../../../preload/types';
 
 interface ParametresScreenProps {
@@ -54,6 +56,21 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   const [voiceTestingId, setVoiceTestingId] = useState<string | null>(null);
   const [voiceErrorMap, setVoiceErrorMap] = useState<Record<string, string>>({});
   const [voiceSuccessMap, setVoiceSuccessMap] = useState<Record<string, boolean>>({});
+
+  // Modale de suppression et régénération du cache
+  const [isClearCacheModalOpen, setIsClearCacheModalOpen] = useState<boolean>(false);
+  const [regenerateAfterClear, setRegenerateAfterClear] = useState<boolean>(true);
+  const [isClearingCache, setIsClearingCache] = useState<boolean>(false);
+  const [preloadProgress, setPreloadProgress] = useState<{
+    isPreloading: boolean;
+    completed: number;
+    total: number;
+    currentText?: string;
+  }>({
+    isPreloading: false,
+    completed: 0,
+    total: 0,
+  });
 
   const loadVoicesAndCache = useCallback(async () => {
     if (window.api?.getKokoroStatus && db?.settings) {
@@ -86,8 +103,16 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         }
       });
 
+      const unsubPreload = window.api.onPreloadProgress?.((data) => {
+        setPreloadProgress(data);
+        if (!data.isPreloading) {
+          loadVoicesAndCache();
+        }
+      });
+
       return () => {
         if (unsubscribe) unsubscribe();
+        if (unsubPreload) unsubPreload();
       };
     }
   }, [loadVoicesAndCache]);
@@ -160,14 +185,84 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
     }
   };
 
-  // Vider le cache audio
-  const handleClearCache = async () => {
+  // Ouvrir le dossier du cache dans l'explorateur de fichiers
+  const handleOpenCacheFolder = async () => {
+    if (!window.api?.openCacheFolder) return;
+    try {
+      const res = await window.api.openCacheFolder();
+      if (!res.success && res.error) {
+        alert('Impossible d’ouvrir le dossier du cache : ' + res.error);
+      }
+    } catch (err: any) {
+      alert('Erreur lors de l’ouverture du dossier : ' + err.message);
+    }
+  };
+
+  // Annuler la génération anticipée en arrière-plan
+  const handleCancelPreload = async () => {
+    if (window.api?.cancelPreload) {
+      await window.api.cancelPreload();
+      setPreloadProgress((prev) => ({ ...prev, isPreloading: false }));
+    }
+  };
+
+  // Suppression atomique et complète du cache audio avec gestion d'erreurs Windows
+  const handleConfirmClearCache = async () => {
     if (!window.api?.clearCache) return;
-    const ok = await window.api.clearCache();
-    if (ok) {
+    setIsClearingCache(true);
+    try {
+      // 1. Arrêter immédiatement toute lecture audio en cours
+      stopAllAudio();
+
+      // 2. Supprimer les fichiers audio et l'index du cache
+      const res = await window.api.clearCache();
+
+      // 3. Mise à jour immédiate du compteur à 0
+      setCacheStats({ count: 0, formattedSize: '0 Ko' });
+      setIsClearCacheModalOpen(false);
+
+      if (res.success) {
+        setBackupMessage(`Cache supprimé : ${res.freedFormatted} libérés (${res.deletedCount} audios)`);
+        setTimeout(() => setBackupMessage(null), 4000);
+      }
+
+      if (res.failedFiles && res.failedFiles.length > 0) {
+        alert(
+          `Certains fichiers n'ont pas pu être supprimés immédiatement (fichiers verrouillés par Windows) :\n` +
+            res.failedFiles.slice(0, 5).join('\n') +
+            (res.failedFiles.length > 5 ? `\n... et ${res.failedFiles.length - 5} autres` : '')
+        );
+      }
+
+      // 4. Relancer la génération anticipée en arrière-plan si la case est cochée
+      if (regenerateAfterClear && window.api?.preloadWords && db.words.length > 0) {
+        const itemsToPreload = db.words.flatMap((w) => [
+          {
+            text: w.english,
+            accent: settings.voiceAccent,
+            preferredVoiceId: settings.preferredVoiceId,
+            speed: settings.voiceSpeed || 1.0,
+          },
+          ...(w.example
+            ? [
+                {
+                  text: w.example,
+                  accent: settings.voiceAccent,
+                  preferredVoiceId: settings.preferredVoiceId,
+                  speed: settings.voiceSpeed || 1.0,
+                },
+              ]
+            : []),
+        ]);
+        await window.api.preloadWords(itemsToPreload);
+      }
+
       await loadVoicesAndCache();
-      setBackupMessage('Cache audio vidé avec succès (tous les anciens fichiers saturés ont été supprimés) !');
-      setTimeout(() => setBackupMessage(null), 3500);
+    } catch (err: any) {
+      console.error('Erreur suppression cache:', err);
+      alert('Erreur lors de la suppression du cache : ' + err.message);
+    } finally {
+      setIsClearingCache(false);
     }
   };
 
@@ -894,48 +989,151 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           )}
         </div>
 
-        {/* 2.7 Cache audio v2 & Espace disque */}
+        {/* 2.7 Cache audio persistant (v2) & Espace disque */}
         <div
           style={{
             backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-subtle)',
-            borderRadius: 'var(--radius-md)',
-            padding: '14px 18px',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px 20px',
             display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            flexWrap: 'wrap',
-            gap: '12px',
+            flexDirection: 'column',
+            gap: '14px',
           }}
         >
-          <div>
-            <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              Cache audio local (v2) : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers WAV PCM 24 kHz)
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: '12px',
+            }}
+          >
+            <div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                Cache audio persistant :{' '}
+                <span style={{ color: 'var(--color-primary)' }}>
+                  {cacheStats.count} audios • {cacheStats.formattedSize}
+                </span>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                Audios conservés sur disque (userData) avec index JSON instantané pour une écoute sans aucune latence.
+              </div>
             </div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-              Chaque prononciation est mémorisée localement pour une relecture instantanée sans calcul.
+
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={handleOpenCacheFolder}
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+                title="Ouvrir le dossier du cache dans l'explorateur Windows"
+              >
+                <FolderOpen size={15} />
+                <span>Ouvrir le dossier du cache</span>
+              </button>
+
+              <button
+                onClick={() => setIsClearCacheModalOpen(true)}
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: 'var(--color-danger, #ef4444)',
+                  padding: '8px 14px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Trash2 size={15} />
+                <span>Supprimer le cache audio</span>
+              </button>
             </div>
           </div>
 
-          <button
-            onClick={handleClearCache}
-            style={{
-              backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              color: 'var(--color-danger, #ef4444)',
-              padding: '8px 14px',
-              borderRadius: 'var(--radius-md)',
-              fontSize: '0.8rem',
-              fontWeight: 700,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              cursor: 'pointer',
-            }}
-          >
-            <Trash2 size={14} />
-            <span>Vider le cache audio</span>
-          </button>
+          {/* Indicateur de génération anticipée en arrière-plan */}
+          {preloadProgress.isPreloading && (
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 600 }}>
+                  <RefreshCw size={14} className="animate-spin" color="var(--color-primary)" />
+                  <span>
+                    Génération en arrière-plan :{' '}
+                    <strong style={{ color: 'var(--color-primary)' }}>
+                      {preloadProgress.completed} / {preloadProgress.total} audios prêts
+                    </strong>
+                    {preloadProgress.currentText && (
+                      <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                        {' '}(« {preloadProgress.currentText.slice(0, 24)}{preloadProgress.currentText.length > 24 ? '...' : ''} »)
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <button
+                  onClick={handleCancelPreload}
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-muted)',
+                    padding: '3px 8px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.75rem',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Arrêter
+                </button>
+              </div>
+
+              <div
+                style={{
+                  height: '6px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderRadius: '3px',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${Math.round((preloadProgress.completed / Math.max(preloadProgress.total, 1)) * 100)}%`,
+                    height: '100%',
+                    backgroundColor: 'var(--color-primary)',
+                    borderRadius: '3px',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+            </div>
+          )}
         </div>
 
         {/* 2.5 Bruitages et effets sonores ludiques */}
@@ -1192,6 +1390,172 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </div>
         </div>
       </div>
+
+      {/* MODAL DE CONFIRMATION DE SUPPRESSION DU CACHE AUDIO */}
+      {isClearCacheModalOpen && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(8px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 120,
+            animation: 'modalBackdropFade 0.15s ease',
+          }}
+          onClick={(e) => {
+            if (e.target === e.currentTarget && !isClearingCache) {
+              setIsClearCacheModalOpen(false);
+            }
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: '490px',
+              maxWidth: '92vw',
+              backgroundColor: 'var(--bg-card)',
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 'var(--radius-xl)',
+              padding: '28px',
+              boxShadow: 'var(--shadow-lg)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '12px',
+                  backgroundColor: 'rgba(239, 68, 68, 0.12)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: 'var(--color-danger, #ef4444)',
+                  flexShrink: 0,
+                }}
+              >
+                <Trash2 size={24} />
+              </div>
+              <div>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
+                  Supprimer le cache audio ?
+                </h3>
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '2px 0 0' }}>
+                  {cacheStats.count} audios en cache ({cacheStats.formattedSize})
+                </p>
+              </div>
+            </div>
+
+            <div
+              style={{
+                fontSize: '0.92rem',
+                color: 'var(--text-primary)',
+                lineHeight: 1.5,
+              }}
+            >
+              Supprimer les <strong>{cacheStats.count} audios</strong> en cache (<strong>{cacheStats.formattedSize}</strong>) ? Ils seront régénérés automatiquement au besoin.
+            </div>
+
+            <div
+              style={{
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                fontSize: '0.8rem',
+                color: 'var(--text-secondary)',
+                lineHeight: 1.45,
+              }}
+            >
+              🛡️ <strong>Sécurité des données :</strong> Ne supprime JAMAIS le modèle Kokoro ni les voix installées, ni vos mots, playlists, XP, streak ou réglages. Seuls les fichiers audio temporaires générés sont effacés.
+            </div>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: 600,
+                color: 'var(--text-primary)',
+                padding: '4px 0',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={regenerateAfterClear}
+                onChange={(e) => setRegenerateAfterClear(e.target.checked)}
+                style={{ width: '16px', height: '16px', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+              />
+              <span>Régénérer ensuite en arrière-plan</span>
+            </label>
+
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'flex-end',
+                gap: '10px',
+                marginTop: '6px',
+              }}
+            >
+              <button
+                onClick={() => setIsClearCacheModalOpen(false)}
+                disabled={isClearingCache}
+                style={{
+                  padding: '10px 18px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontWeight: 700,
+                  fontSize: '0.85rem',
+                  cursor: isClearingCache ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Annuler
+              </button>
+
+              <button
+                onClick={handleConfirmClearCache}
+                disabled={isClearingCache}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--color-danger, #ef4444)',
+                  border: 'none',
+                  color: '#fff',
+                  fontWeight: 800,
+                  fontSize: '0.85rem',
+                  cursor: isClearingCache ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.25)',
+                }}
+              >
+                {isClearingCache ? (
+                  <>
+                    <RefreshCw size={14} className="animate-spin" />
+                    <span>Suppression...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    <span>Supprimer</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -18,6 +18,32 @@ const KOKORO_MODEL_FILES = [
   },
 ];
 
+export interface CacheIndexEntry {
+  text: string;
+  voiceId: string;
+  speed: number;
+  format: 'wav' | 'mp3';
+  sizeBytes: number;
+  createdAt: string;
+  fileName: string;
+}
+
+export interface ClearCacheResult {
+  success: boolean;
+  freedBytes: number;
+  freedFormatted: string;
+  deletedCount: number;
+  failedFiles?: string[];
+  error?: string;
+}
+
+export interface PreloadItem {
+  text: string;
+  accent?: VoiceAccent;
+  voiceId?: string;
+  speed?: number;
+}
+
 export class VoiceManager {
   public static readonly CACHE_VERSION = 'v2';
   private cacheDir: string;
@@ -28,12 +54,24 @@ export class VoiceManager {
   private isDownloading: boolean = false;
   private lastWorkerInitPromise: Promise<boolean> | null = null;
 
+  // Index de cache en mémoire
+  private cacheIndex: Map<string, CacheIndexEntry> = new Map();
+  private indexFilePath: string;
+
+  // File d'attente de pré-génération anticipée en arrière-plan
+  private preloadQueue: PreloadItem[] = [];
+  private isPreloading: boolean = false;
+  private preloadTotal: number = 0;
+  private preloadCompleted: number = 0;
+
   constructor() {
     const userData = app.getPath('userData');
     this.cacheDir = path.join(userData, 'audio_cache');
     this.userModelsDir = path.join(userData, 'models');
+    this.indexFilePath = path.join(this.cacheDir, 'cache_index.json');
 
     this.ensureDirs();
+    this.loadCacheIndex();
     this.initWorker();
   }
 
@@ -44,6 +82,163 @@ export class VoiceManager {
   private ensureDirs(): void {
     if (!fs.existsSync(this.cacheDir)) fs.mkdirSync(this.cacheDir, { recursive: true });
     if (!fs.existsSync(this.userModelsDir)) fs.mkdirSync(this.userModelsDir, { recursive: true });
+  }
+
+  /**
+   * Charge l'index de cache persistant (JSON) et assainit le dossier :
+   * - Vérification de version (v2) : purge automatique des anciens fichiers obsolètes
+   * - Suppression des fichiers temporaires (.tmp) ou corrompus (taille 0 ou incomplète)
+   * - Restauration de l'index en mémoire pour accès instantané O(1)
+   */
+  private loadCacheIndex(): void {
+    try {
+      this.ensureDirs();
+      let indexData: { version?: string; entries?: Record<string, CacheIndexEntry> } | null = null;
+
+      if (fs.existsSync(this.indexFilePath)) {
+        try {
+          const raw = fs.readFileSync(this.indexFilePath, 'utf-8');
+          indexData = JSON.parse(raw);
+        } catch (readErr) {
+          console.warn('[VoiceManager] Index de cache JSON illisible ou corrompu, réinitialisation :', readErr);
+        }
+      }
+
+      const files = fs.readdirSync(this.cacheDir);
+      const isVersionMismatch = !indexData || indexData.version !== VoiceManager.CACHE_VERSION;
+
+      if (isVersionMismatch) {
+        console.log(`[VoiceManager] Version de cache différente (cible ${VoiceManager.CACHE_VERSION}). Nettoyage des anciens audios...`);
+      }
+
+      // Nettoyage et synchronisation des fichiers réels
+      for (const file of files) {
+        if (file === 'cache_index.json') continue;
+        const filePath = path.join(this.cacheDir, file);
+
+        try {
+          const stat = fs.statSync(filePath);
+
+          // Supprimer tout fichier temporaire résiduel ou fichier incomplet / vide (< 44 octets pour un WAV)
+          if (file.includes('.tmp') || (stat.isFile() && stat.size < 44)) {
+            fs.unlinkSync(filePath);
+            continue;
+          }
+
+          // Si version incompatible, purger les anciens fichiers pour éviter les artefacts saturés
+          if (isVersionMismatch && stat.isFile()) {
+            fs.unlinkSync(filePath);
+            continue;
+          }
+        } catch {}
+      }
+
+      this.cacheIndex.clear();
+
+      if (!isVersionMismatch && indexData?.entries) {
+        for (const [hash, entry] of Object.entries(indexData.entries)) {
+          const filePath = path.join(this.cacheDir, entry.fileName || `${hash}.${entry.format}`);
+          if (fs.existsSync(filePath)) {
+            this.cacheIndex.set(hash, entry);
+          }
+        }
+      }
+
+      this.saveCacheIndex();
+    } catch (err) {
+      console.warn('[VoiceManager] Erreur initialisation index de cache :', err);
+    }
+  }
+
+  /**
+   * Sauvegarde atomique de l'index de cache sur le disque
+   */
+  private saveCacheIndex(): void {
+    try {
+      const obj: Record<string, CacheIndexEntry> = {};
+      this.cacheIndex.forEach((entry, hash) => {
+        obj[hash] = entry;
+      });
+
+      const payload = JSON.stringify(
+        {
+          version: VoiceManager.CACHE_VERSION,
+          updatedAt: new Date().toISOString(),
+          entries: obj,
+        },
+        null,
+        2
+      );
+
+      const tmpIndex = `${this.indexFilePath}.tmp_${Date.now()}`;
+      fs.writeFileSync(tmpIndex, payload, 'utf-8');
+      fs.renameSync(tmpIndex, this.indexFilePath);
+    } catch (err) {
+      console.warn('[VoiceManager] Avertissement enregistrement index cache :', err);
+    }
+  }
+
+  /**
+   * Écriture atomique sécurisée d'un fichier audio dans le cache
+   * 1. Écriture dans un fichier temporaire unique
+   * 2. Contrôle d'intégrité (taille, en-tête)
+   * 3. Renommage atomique vers le nom définitif
+   * 4. Enregistrement immédiat dans l'index O(1)
+   */
+  public saveAudioToCacheAtomically(
+    hash: string,
+    format: 'wav' | 'mp3',
+    buffer: Buffer,
+    meta: { text: string; voiceId: string; speed: number }
+  ): boolean {
+    try {
+      this.ensureDirs();
+      const finalFileName = `${hash}.${format}`;
+      const finalPath = path.join(this.cacheDir, finalFileName);
+      const tmpPath = path.join(this.cacheDir, `${hash}.tmp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}.${format}`);
+
+      fs.writeFileSync(tmpPath, buffer);
+
+      const stat = fs.statSync(tmpPath);
+      if (stat.size !== buffer.length || stat.size < 44) {
+        try {
+          fs.unlinkSync(tmpPath);
+        } catch {}
+        console.warn(`[VoiceManager] Échec écriture atomique (taille suspecte: ${stat.size} octets)`);
+        return false;
+      }
+
+      fs.renameSync(tmpPath, finalPath);
+
+      // Mise à jour de l'index
+      this.cacheIndex.set(hash, {
+        text: meta.text,
+        voiceId: meta.voiceId,
+        speed: meta.speed,
+        format,
+        sizeBytes: buffer.length,
+        createdAt: new Date().toISOString(),
+        fileName: finalFileName,
+      });
+
+      this.saveCacheIndex();
+      return true;
+    } catch (err) {
+      console.error('[VoiceManager] Erreur écriture atomique du cache audio :', err);
+      return false;
+    }
+  }
+
+  /**
+   * Vérifie en O(1) si un audio existe dans le cache persistant
+   */
+  public hasCachedAudio(hash: string): boolean {
+    if (this.cacheIndex.has(hash)) {
+      return true;
+    }
+    const wavPath = path.join(this.cacheDir, `${hash}.wav`);
+    const mp3Path = path.join(this.cacheDir, `${hash}.mp3`);
+    return fs.existsSync(wavPath) || fs.existsSync(mp3Path);
   }
 
   /**
@@ -117,7 +312,7 @@ export class VoiceManager {
         this.worker = null;
       });
 
-      // Lancer le pré-chargement du modèle en tâche de fond
+      // Lancer le pré-chargement et le réchauffement du modèle en tâche de fond dès le démarrage
       this.warmupModel();
     } catch (err) {
       console.error('[VoiceManager] Échec du démarrage du worker Kokoro :', err);
@@ -157,7 +352,8 @@ export class VoiceManager {
   }
 
   /**
-   * Pré-charge le modèle Kokoro en mémoire
+   * Pré-charge et réchauffe le modèle Kokoro en mémoire dès le démarrage
+   * Une passe réelle d'inférence factice est effectuée pour que le premier vrai mot soit instantané
    */
   public async warmupModel(): Promise<boolean> {
     const modelInfo = this.getKokoroModelDirectory();
@@ -218,7 +414,6 @@ export class VoiceManager {
         } catch {}
       }
 
-      // Si le modèle principal est présent, les voix intégrées sont considérées prêtes
       if (!isAvailable && hasModel) {
         isAvailable = true;
       }
@@ -334,7 +529,7 @@ export class VoiceManager {
   }
 
   /**
-   * Statistiques du cache audio
+   * Statistiques du cache audio calculées avec précision
    */
   public getCacheStats(): { count: number; totalSizeBytes: number; formattedSize: string } {
     try {
@@ -344,9 +539,10 @@ export class VoiceManager {
       let count = 0;
 
       for (const file of files) {
+        if (file === 'cache_index.json' || file.includes('.tmp')) continue;
         try {
           const stat = fs.statSync(path.join(this.cacheDir, file));
-          if (stat.isFile()) {
+          if (stat.isFile() && stat.size > 0) {
             count++;
             totalSizeBytes += stat.size;
           }
@@ -365,33 +561,205 @@ export class VoiceManager {
   }
 
   /**
-   * Vider le cache audio (supprime tous les fichiers de cache v1 et v2)
+   * Ouvre le dossier audio_cache dans l'Explorateur Windows / macOS Finder
    */
-  public clearCache(): boolean {
+  public async openCacheFolder(): Promise<{ success: boolean; error?: string }> {
     try {
-      if (fs.existsSync(this.cacheDir)) {
-        const files = fs.readdirSync(this.cacheDir);
-        for (const file of files) {
-          try {
-            fs.unlinkSync(path.join(this.cacheDir, file));
-          } catch {}
-        }
+      this.ensureDirs();
+      const err = await shell.openPath(this.cacheDir);
+      if (err) {
+        console.error('[VoiceManager] Impossible d’ouvrir le dossier de cache :', err);
+        return { success: false, error: err };
       }
-      return true;
-    } catch (err) {
-      console.warn('[VoiceManager] Erreur lors du vidage du cache audio :', err);
-      return false;
+      return { success: true };
+    } catch (err: any) {
+      console.error('[VoiceManager] Impossible d’ouvrir le dossier de cache :', err);
+      return { success: false, error: err?.message || String(err) };
     }
   }
 
   /**
-   * Synthèse via Kokoro dans le Worker avec gestion d'erreur explicite
+   * Suppression propre et complète du cache audio :
+   * - Arrêt immédiat de la file d'attente de pré-génération
+   * - Suppression sécurisée de tous les fichiers audio et de l'index
+   * - Gestion des verrous Windows (retries sur EBUSY / EPERM)
+   * - Ne touche JAMAIS aux modèles Kokoro, voix ou données applicatives
+   */
+  public async clearCache(): Promise<ClearCacheResult> {
+    this.cancelPreload();
+
+    let freedBytes = 0;
+    let deletedCount = 0;
+    const failedFiles: string[] = [];
+
+    try {
+      this.ensureDirs();
+      const files = fs.readdirSync(this.cacheDir);
+
+      for (const file of files) {
+        const fullPath = path.join(this.cacheDir, file);
+
+        try {
+          const stat = fs.statSync(fullPath);
+          const size = stat.size;
+
+          // Tentative de suppression avec jusqu'à 3 essais en cas de verrou Windows
+          let removed = false;
+          for (let attempt = 0; attempt < 3; attempt++) {
+            try {
+              fs.unlinkSync(fullPath);
+              removed = true;
+              break;
+            } catch (unlinkErr: any) {
+              if (unlinkErr.code === 'EBUSY' || unlinkErr.code === 'EPERM') {
+                await new Promise((r) => setTimeout(r, 80));
+              } else {
+                throw unlinkErr;
+              }
+            }
+          }
+
+          if (removed) {
+            if (file !== 'cache_index.json') {
+              freedBytes += size;
+              deletedCount++;
+            }
+          } else {
+            failedFiles.push(file);
+          }
+        } catch (err) {
+          failedFiles.push(file);
+        }
+      }
+
+      // Réinitialiser l'index
+      this.cacheIndex.clear();
+      this.saveCacheIndex();
+
+      const mb = (freedBytes / (1024 * 1024)).toFixed(1);
+      return {
+        success: failedFiles.length === 0,
+        freedBytes,
+        freedFormatted: `${mb} Mo`,
+        deletedCount,
+        failedFiles: failedFiles.length > 0 ? failedFiles : undefined,
+      };
+    } catch (err: any) {
+      console.error('[VoiceManager] Erreur critique vidage du cache audio :', err);
+      return {
+        success: false,
+        freedBytes,
+        freedFormatted: '0 Mo',
+        deletedCount,
+        error: err?.message || String(err),
+      };
+    }
+  }
+
+
+  /**
+   * File de pré-génération en arrière-plan (Background Audio Queue) :
+   * Prépare les fichiers audio des mots du dictionnaire sans faire ramer l'application
+   */
+  public preloadWords(items: PreloadItem[]): void {
+    if (!items || items.length === 0) return;
+
+    // Filtrer pour n'ajouter que les éléments qui ne sont pas déjà en cache
+    const toQueue: PreloadItem[] = [];
+    for (const item of items) {
+      if (!item.text || !item.text.trim()) continue;
+      const clean = item.text.trim();
+      const voiceId = item.voiceId || getDefaultVoiceForAccent(item.accent || 'en-US');
+      const speed = item.speed || 1.0;
+      const hash = this.getHash(clean, voiceId, speed);
+
+      if (!this.hasCachedAudio(hash)) {
+        toQueue.push({
+          text: clean,
+          accent: item.accent || 'en-US',
+          voiceId,
+          speed,
+        });
+      }
+    }
+
+    if (toQueue.length === 0) return;
+
+    this.preloadQueue.push(...toQueue);
+    this.preloadTotal = this.preloadQueue.length + this.preloadCompleted;
+
+    this.notifyPreloadProgress();
+
+    if (!this.isPreloading) {
+      this.processPreloadQueue();
+    }
+  }
+
+  public cancelPreload(): void {
+    this.preloadQueue = [];
+    this.isPreloading = false;
+    this.preloadCompleted = 0;
+    this.preloadTotal = 0;
+    this.notifyPreloadProgress();
+  }
+
+  private notifyPreloadProgress(currentText?: string): void {
+    if (this.window && !this.window.isDestroyed()) {
+      this.window.webContents.send('audio:preloadProgress', {
+        isPreloading: this.isPreloading,
+        completed: this.preloadCompleted,
+        total: this.preloadTotal,
+        currentText,
+      });
+    }
+  }
+
+  private async processPreloadQueue(): Promise<void> {
+    if (this.isPreloading || this.preloadQueue.length === 0) return;
+    this.isPreloading = true;
+
+    while (this.preloadQueue.length > 0) {
+      const item = this.preloadQueue.shift();
+      if (!item) break;
+
+      const voiceId = item.voiceId || getDefaultVoiceForAccent(item.accent || 'en-US');
+      const speed = item.speed || 1.0;
+      const hash = this.getHash(item.text, voiceId, speed);
+
+      // Si déjà généré entre-temps, passer
+      if (this.hasCachedAudio(hash)) {
+        this.preloadCompleted++;
+        this.notifyPreloadProgress(item.text);
+        continue;
+      }
+
+      this.notifyPreloadProgress(item.text);
+
+      try {
+        await this.getAudioDataUrl(item.text, item.accent, voiceId, speed);
+      } catch (err) {
+        console.warn(`[VoiceManager] Avertissement pré-génération pour "${item.text}" :`, err);
+      }
+
+      this.preloadCompleted++;
+      this.notifyPreloadProgress();
+
+      // Pause douce (200ms) pour libérer le processeur et laisser l'interface fluide
+      await new Promise((r) => setTimeout(r, 200));
+    }
+
+    this.isPreloading = false;
+    this.notifyPreloadProgress();
+  }
+
+  /**
+   * Synthèse via Kokoro dans le Worker avec écriture atomique
    */
   public async synthesizeWithKokoro(
     text: string,
     voiceId: string,
     speed: number,
-    cachedWavPath: string
+    hash: string
   ): Promise<{ success: boolean; dataUrl?: string; error?: string }> {
     const modelInfo = this.getKokoroModelDirectory();
     if (!modelInfo) {
@@ -407,13 +775,8 @@ export class VoiceManager {
       });
 
       if (res && res.success && res.wavBase64) {
-        // Enregistrement dans le cache local sur le disque
-        try {
-          const buf = Buffer.from(res.wavBase64, 'base64');
-          fs.writeFileSync(cachedWavPath, buf);
-        } catch (writeErr) {
-          console.warn('[VoiceManager] Avertissement écriture cache audio :', writeErr);
-        }
+        const buf = Buffer.from(res.wavBase64, 'base64');
+        this.saveAudioToCacheAtomically(hash, 'wav', buf, { text, voiceId, speed });
 
         return {
           success: true,
@@ -439,7 +802,7 @@ export class VoiceManager {
   private async fetchDictionaryApiAudio(
     word: string,
     accent: VoiceAccent,
-    outputMp3Path: string
+    hash: string
   ): Promise<boolean> {
     try {
       const cleanWord = word.trim().toLowerCase();
@@ -466,20 +829,16 @@ export class VoiceManager {
       if (!audioRes.ok) return false;
 
       const buffer = Buffer.from(await audioRes.arrayBuffer());
-      fs.writeFileSync(outputMp3Path, buffer);
-      return true;
+      return this.saveAudioToCacheAtomically(hash, 'mp3', buffer, { text: cleanWord, voiceId: 'dictionary', speed: 1.0 });
     } catch {
       return false;
     }
   }
 
   /**
-   * Cascade audio principale avec bascule entre voix Kokoro avant repli système :
-   * 1. Cache local disque v2
-   * 2. Kokoro-82M :
-   *    2.1 Voix sélectionnée
-   *    2.2 Voix par défaut de l'accent (ex: Heart pour US, Emma pour UK)
-   *    2.3 Voix par défaut de l'autre accent
+   * Cascade audio principale avec cache persistant O(1) et écriture atomique :
+   * 1. Cache local disque v2 (accès instantané)
+   * 2. Kokoro-82M (avec modèle chaud et repli entre voix)
    * 3. DictionaryAPI (enregistrements humains mots seuls)
    * 4. Fallback système (SAPI)
    */
@@ -509,16 +868,18 @@ export class VoiceManager {
     const cachedWav = path.join(this.cacheDir, `${hash}.wav`);
     const cachedMp3 = path.join(this.cacheDir, `${hash}.mp3`);
 
-    // 1. PALIER 1 : CACHE LOCAL DISQUE (v2)
-    if (fs.existsSync(cachedWav)) {
+    // 1. PALIER 1 : CACHE LOCAL PERSISTANT DISQUE (v2)
+    if (this.cacheIndex.has(hash) || fs.existsSync(cachedWav)) {
       try {
-        const data = fs.readFileSync(cachedWav).toString('base64');
-        return {
-          success: true,
-          dataUrl: `data:audio/wav;base64,${data}`,
-          source: 'cache',
-          voiceUsed: effectiveVoiceId,
-        };
+        if (fs.existsSync(cachedWav)) {
+          const data = fs.readFileSync(cachedWav).toString('base64');
+          return {
+            success: true,
+            dataUrl: `data:audio/wav;base64,${data}`,
+            source: 'cache',
+            voiceUsed: effectiveVoiceId,
+          };
+        }
       } catch {}
     }
     if (fs.existsSync(cachedMp3)) {
@@ -533,11 +894,11 @@ export class VoiceManager {
       } catch {}
     }
 
-    // 2. PALIER 2 : MOTEUR NEURONAL LOCAL KOKORO-82M
+    // 2. PALIER 2 : MOTEUR NEURONAL LOCAL KOKORO-82M (avec modèle chaud)
     const modelInfo = this.getKokoroModelDirectory();
     if (modelInfo) {
       // 2.1 Tentative avec la voix demandée
-      let kokoroRes = await this.synthesizeWithKokoro(cleanText, effectiveVoiceId, speed, cachedWav);
+      let kokoroRes = await this.synthesizeWithKokoro(cleanText, effectiveVoiceId, speed, hash);
       if (kokoroRes.success && kokoroRes.dataUrl) {
         return {
           success: true,
@@ -557,7 +918,7 @@ export class VoiceManager {
         const fallbackHash = this.getHash(cleanText, accentDefaultVoice, speed);
         const fallbackWav = path.join(this.cacheDir, `${fallbackHash}.wav`);
 
-        if (fs.existsSync(fallbackWav)) {
+        if (this.hasCachedAudio(fallbackHash) && fs.existsSync(fallbackWav)) {
           try {
             const data = fs.readFileSync(fallbackWav).toString('base64');
             return {
@@ -569,7 +930,7 @@ export class VoiceManager {
           } catch {}
         }
 
-        kokoroRes = await this.synthesizeWithKokoro(cleanText, accentDefaultVoice, speed, fallbackWav);
+        kokoroRes = await this.synthesizeWithKokoro(cleanText, accentDefaultVoice, speed, fallbackHash);
         if (kokoroRes.success && kokoroRes.dataUrl) {
           return {
             success: true,
@@ -586,7 +947,7 @@ export class VoiceManager {
         const secondaryHash = this.getHash(cleanText, secondaryVoice, speed);
         const secondaryWav = path.join(this.cacheDir, `${secondaryHash}.wav`);
 
-        if (fs.existsSync(secondaryWav)) {
+        if (this.hasCachedAudio(secondaryHash) && fs.existsSync(secondaryWav)) {
           try {
             const data = fs.readFileSync(secondaryWav).toString('base64');
             return {
@@ -598,7 +959,7 @@ export class VoiceManager {
           } catch {}
         }
 
-        kokoroRes = await this.synthesizeWithKokoro(cleanText, secondaryVoice, speed, secondaryWav);
+        kokoroRes = await this.synthesizeWithKokoro(cleanText, secondaryVoice, speed, secondaryHash);
         if (kokoroRes.success && kokoroRes.dataUrl) {
           return {
             success: true,
@@ -616,7 +977,7 @@ export class VoiceManager {
     // 3. PALIER 3 : ENREGISTREMENTS HUMAINS (dictionaryapi.dev pour les mots seuls)
     const isSingleWord = !cleanText.includes(' ') && cleanText.length < 35;
     if (isSingleWord) {
-      const ok = await this.fetchDictionaryApiAudio(cleanText, accent, cachedMp3);
+      const ok = await this.fetchDictionaryApiAudio(cleanText, accent, hash);
       if (ok && fs.existsSync(cachedMp3)) {
         try {
           const data = fs.readFileSync(cachedMp3).toString('base64');

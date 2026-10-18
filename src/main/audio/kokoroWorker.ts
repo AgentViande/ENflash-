@@ -93,6 +93,15 @@ if (parentPort) {
     try {
       if (type === 'init') {
         const ok = await initTTS(modelDir);
+        if (ok && ttsInstance) {
+          try {
+            // Passe de réchauffement réelle (inférence factice) pour charger et allouer les tenseurs ONNX
+            await ttsInstance.generate('ready', { voice: 'af_heart', speed: 1.0 });
+            console.log('[KokoroWorker] Inférence de réchauffement terminée avec succès (modèle chaud et prêt)');
+          } catch (warmupErr) {
+            console.warn('[KokoroWorker] Avertissement inférence de réchauffement :', warmupErr);
+          }
+        }
         parentPort?.postMessage({ id, type: 'init', success: ok });
         return;
       }

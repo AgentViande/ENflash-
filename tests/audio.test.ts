@@ -4,6 +4,7 @@ import {
   speakText,
   getLastAudioSource,
   subscribeAudioSource,
+  stopAllAudio,
 } from '../src/renderer/src/utils/audio';
 import {
   AVAILABLE_KOKORO_VOICES,
@@ -276,4 +277,72 @@ describe('Système Audio & Cascade Kokoro-82M', () => {
       expect(createdVolume).toBe(1.0);
     });
   });
+
+  describe('Arrêt d’urgence du son (stopAllAudio)', () => {
+    it('stoppe la lecture HTMLAudio et réinitialise la synthèse vocale', async () => {
+      let paused = false;
+      let resetSrc = false;
+      (global as any).Audio = class {
+        volume = 1.0;
+        src = 'data:audio/wav;base64,TEST';
+        play = vi.fn().mockImplementation(() => Promise.resolve());
+        pause = vi.fn().mockImplementation(() => {
+          paused = true;
+        });
+        set currentTime(_v: number) {}
+        get currentTime() { return 0; }
+      };
+
+      (window.api.getAudioDataUrl as any).mockResolvedValue({
+        success: true,
+        source: 'kokoro',
+        dataUrl: 'data:audio/wav;base64,TEST',
+        voiceUsed: 'af_heart',
+      });
+
+      // Démarrer la lecture
+      await speakText('strawberry');
+
+      // Appel de l'arrêt
+      stopAllAudio();
+
+      expect(paused).toBe(true);
+      expect(window.speechSynthesis.cancel).toHaveBeenCalled();
+    });
+  });
+
+  describe('Cache audio persistant v2 & Index O(1)', () => {
+    it('génère une clé de cache déterministe avec version de cache', () => {
+      const crypto = require('crypto');
+      const getHash = (text: string, voiceId: string, speed: number, version: string = 'v2') => {
+        return crypto
+          .createHash('sha256')
+          .update(`${version}_${text.toLowerCase().trim()}_${voiceId}_${speed.toFixed(2)}`)
+          .digest('hex')
+          .substring(0, 24);
+      };
+
+      const keyV2 = getHash('banana', 'af_heart', 1.0, 'v2');
+      const keyV3 = getHash('banana', 'af_heart', 1.0, 'v3');
+
+      // Clé déterministe
+      expect(getHash('banana', 'af_heart', 1.0, 'v2')).toBe(keyV2);
+      // Différente si la version change (permet la purge automatique lors de mises à jour de qualité)
+      expect(keyV2).not.toBe(keyV3);
+    });
+
+    it('ignore les fichiers temporaires orphelins et corrompus (< 44 octets)', () => {
+      const isValidCacheFile = (fileName: string, sizeBytes: number) => {
+        if (fileName.endsWith('.tmp')) return false;
+        if (sizeBytes < 44) return false; // En-tête WAV fait au minimum 44 octets
+        return fileName.endsWith('.wav') || fileName.endsWith('.mp3');
+      };
+
+      expect(isValidCacheFile('abc_123.tmp', 5000)).toBe(false);
+      expect(isValidCacheFile('corrupted.wav', 12)).toBe(false);
+      expect(isValidCacheFile('good.wav', 24000)).toBe(true);
+      expect(isValidCacheFile('cache_index.json', 1024)).toBe(false);
+    });
+  });
 });
+

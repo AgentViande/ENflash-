@@ -98,6 +98,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setDb(loaded);
         // Appliquer le thème dès le chargement
         document.documentElement.setAttribute('data-theme', loaded.settings.theme);
+
+        // Pré-génération douce en arrière-plan des mots du vocabulaire
+        if (window.api?.preloadWords && loaded.words && loaded.words.length > 0) {
+          const itemsToPreload = loaded.words.map((w) => ({
+            text: w.english,
+            accent: loaded.settings.voiceAccent,
+            voiceId: loaded.settings.preferredVoiceId,
+            speed: loaded.settings.voiceSpeed || 1.0,
+          }));
+
+          // Décalage de 1 seconde pour laisser l'interface démarrer instantanément
+          setTimeout(() => {
+            window.api?.preloadWords(itemsToPreload);
+          }, 1000);
+        }
       }
     } catch (err) {
       console.error('Erreur lors du chargement de la base :', err);
@@ -339,6 +354,28 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
       await persistDb(updatedDb);
       playSfx('success');
+
+      // Pré-génération anticipée immédiate en arrière-plan (mot et exemple)
+      if (window.api?.preloadWords && updatedDb.settings) {
+        const items = [
+          {
+            text: newWord.english,
+            accent: updatedDb.settings.voiceAccent,
+            voiceId: updatedDb.settings.preferredVoiceId,
+            speed: updatedDb.settings.voiceSpeed || 1.0,
+          },
+        ];
+        if (newWord.example && newWord.example.trim()) {
+          items.push({
+            text: newWord.example.trim(),
+            accent: updatedDb.settings.voiceAccent,
+            voiceId: updatedDb.settings.preferredVoiceId,
+            speed: updatedDb.settings.voiceSpeed || 1.0,
+          });
+        }
+        window.api.preloadWords(items);
+      }
+
       return { success: true, word: newWord };
     },
     [db, checkBadgesAndXp, persistDb, playSfx]
@@ -350,6 +387,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       if (!db) return;
       const updatedWords = db.words.map((w) => (w.id === word.id ? { ...word, updatedAt: new Date().toISOString() } : w));
       await persistDb({ ...db, words: updatedWords });
+
+      // Pré-génération anticipée immédiate en arrière-plan (mot et exemple)
+      if (window.api?.preloadWords && db.settings) {
+        const items = [
+          {
+            text: word.english,
+            accent: db.settings.voiceAccent,
+            voiceId: db.settings.preferredVoiceId,
+            speed: db.settings.voiceSpeed || 1.0,
+          },
+        ];
+        if (word.example && word.example.trim()) {
+          items.push({
+            text: word.example.trim(),
+            accent: db.settings.voiceAccent,
+            voiceId: db.settings.preferredVoiceId,
+            speed: db.settings.voiceSpeed || 1.0,
+          });
+        }
+        window.api.preloadWords(items);
+      }
     },
     [db, persistDb]
   );

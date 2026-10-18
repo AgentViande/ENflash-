@@ -118,6 +118,22 @@ export function getLastAudioSource(): AudioSourceType {
   return lastAudioSource;
 }
 
+export function stopAllAudio(): void {
+  if (currentAudioElement) {
+    try {
+      currentAudioElement.pause();
+      currentAudioElement.currentTime = 0;
+      currentAudioElement.src = '';
+    } catch {}
+    currentAudioElement = null;
+  }
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
+  }
+}
+
 export function subscribeAudioSource(listener: (source: AudioSourceType) => void): () => void {
   sourceListeners.add(listener);
   listener(lastAudioSource);
@@ -373,3 +389,4 @@ export async function runVoiceComparison(
 
   if (onPhaseChange) onPhaseChange('done');
 }
+

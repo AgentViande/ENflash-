@@ -233,6 +233,20 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return voiceMgr.clearCache();
   });
 
+  ipcMain.handle('audio:openCacheFolder', async () => {
+    return voiceMgr.openCacheFolder();
+  });
+
+  ipcMain.handle('audio:preloadWords', async (_event, items: any[]) => {
+    voiceMgr.preloadWords(items);
+    return true;
+  });
+
+  ipcMain.handle('audio:cancelPreload', async () => {
+    voiceMgr.cancelPreload();
+    return true;
+  });
+
   // Stubs de rétro-compatibilité
   ipcMain.handle('audio:getVoicesStatus', async () => {
     return [];

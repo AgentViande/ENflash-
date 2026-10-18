@@ -38,10 +38,18 @@ const api: ElectronAPI = {
   getComparisonSample: (params) => ipcRenderer.invoke('audio:getComparisonSample', params),
   getCacheStats: () => ipcRenderer.invoke('audio:getCacheStats'),
   clearCache: () => ipcRenderer.invoke('audio:clearCache'),
+  openCacheFolder: () => ipcRenderer.invoke('audio:openCacheFolder'),
+  preloadWords: (items) => ipcRenderer.invoke('audio:preloadWords', items),
+  cancelPreload: () => ipcRenderer.invoke('audio:cancelPreload'),
   onKokoroProgress: (callback) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('audio:kokoroProgress', handler);
     return () => ipcRenderer.removeListener('audio:kokoroProgress', handler);
+  },
+  onPreloadProgress: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('audio:preloadProgress', handler);
+    return () => ipcRenderer.removeListener('audio:preloadProgress', handler);
   },
 
   // Rétro-compatibilité

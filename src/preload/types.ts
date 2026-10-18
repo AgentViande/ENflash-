@@ -49,8 +49,19 @@ export interface ElectronAPI {
     kokoroDataUrl?: string;
   }>;
   getCacheStats: () => Promise<{ count: number; totalSizeBytes: number; formattedSize: string }>;
-  clearCache: () => Promise<boolean>;
+  clearCache: () => Promise<{
+    success: boolean;
+    freedBytes: number;
+    freedFormatted: string;
+    deletedCount: number;
+    failedFiles?: string[];
+    error?: string;
+  }>;
+  openCacheFolder: () => Promise<{ success: boolean; error?: string }>;
+  preloadWords: (items: Array<{ text: string; accent?: VoiceAccent; voiceId?: string; speed?: number }>) => Promise<boolean>;
+  cancelPreload: () => Promise<boolean>;
   onKokoroProgress: (callback: (data: { progress: number; label: string }) => void) => () => void;
+  onPreloadProgress?: (callback: (data: { isPreloading: boolean; completed: number; total: number; currentText?: string }) => void) => () => void;
 
   // Rétro-compatibilité
   getVoicesStatus?: () => Promise<PiperVoiceModel[]>;
