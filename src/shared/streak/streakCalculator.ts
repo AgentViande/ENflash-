@@ -1,19 +1,7 @@
 import { StreakState } from '../types';
+import { daysBetweenDates, getParisDayKey } from '../date/parisDate';
 
-/**
- * Calcule le nombre de jours calendaires entre deux dates au format YYYY-MM-DD.
- * Utilise UTC pour éviter tout artefact lié aux changements d'heure (heure d'été/hiver).
- */
-export function daysBetweenDates(dateStr1: string, dateStr2: string): number {
-  const [y1, m1, d1] = dateStr1.split('-').map(Number);
-  const [y2, m2, d2] = dateStr2.split('-').map(Number);
-
-  const utc1 = Date.UTC(y1, m1 - 1, d1);
-  const utc2 = Date.UTC(y2, m2 - 1, d2);
-
-  const msPerDay = 1000 * 60 * 60 * 24;
-  return Math.round((utc2 - utc1) / msPerDay);
-}
+export { daysBetweenDates };
 
 export interface StreakCheckResult {
   currentStreak: number;
@@ -26,10 +14,11 @@ export interface StreakCheckResult {
 /**
  * Vérifie l'état actuel du streak au début de la journée avant validation du test quotidien.
  * Protège le streak grâce aux jokers de gel si des jours ont été manqués.
+ * Protection anti-triche : ignore le recul d'horloge.
  */
 export function evaluateStreakBeforeToday(
   state: StreakState,
-  todayStr: string
+  todayStr: string = getParisDayKey()
 ): StreakCheckResult {
   if (!state.lastCompletedDate) {
     return {
@@ -43,7 +32,18 @@ export function evaluateStreakBeforeToday(
 
   const diff = daysBetweenDates(state.lastCompletedDate, todayStr);
 
-  // Même jour (déjà fait ou en cours) ou jour suivant consécutif (hier validé)
+  // Protection anti-triche : l'horloge système a reculé
+  if (diff < 0) {
+    return {
+      currentStreak: state.currentStreak,
+      streakFreezes: state.streakFreezes,
+      freezeUsed: false,
+      streakLost: false,
+      missedDays: 0,
+    };
+  }
+
+  // Même jour (déjà fait ou en cours) ou jour consécutif immédiat (hier validé)
   if (diff <= 1) {
     return {
       currentStreak: state.currentStreak,
@@ -84,19 +84,33 @@ export interface DailyCompletionResult {
   freezeEarned: boolean;
   freezeUsed: boolean;
   isNewRecord: boolean;
+  isRollback?: boolean;
 }
 
 /**
  * Valide la complétion du test quotidien et met à jour l'état du streak :
- * - Incrémente le streak
+ * - Incrémente le streak si nouveau jour calendaire (Paris)
  * - Met à jour le record personnel
  * - Offre 1 joker de gel tous les 7 jours consécutifs
  * - Enregistre l'activité sur le calendrier
+ * - Protection anti-triche si l'horloge a reculé
  */
 export function recordDailyCompletion(
   currentState: StreakState,
-  todayStr: string
+  todayStr: string = getParisDayKey()
 ): DailyCompletionResult {
+  // Protection anti-triche : si l'horloge recule par rapport au dernier jour validé
+  if (currentState.lastCompletedDate && daysBetweenDates(currentState.lastCompletedDate, todayStr) < 0) {
+    return {
+      newState: currentState,
+      newStreak: currentState.currentStreak,
+      freezeEarned: false,
+      freezeUsed: false,
+      isNewRecord: false,
+      isRollback: true,
+    };
+  }
+
   // Évaluer l'état actuel en prenant en compte d'éventuels gels de streak
   const check = evaluateStreakBeforeToday(currentState, todayStr);
   let streak = check.currentStreak;
@@ -127,7 +141,7 @@ export function recordDailyCompletion(
   const newState: StreakState = {
     currentStreak: streak,
     maxStreak: newMax,
-    lastCompletedDate: todayStr,
+    lastCompletedDate: alreadyDoneToday ? currentState.lastCompletedDate : todayStr,
     streakFreezes: freezes,
     activityCalendar: newCalendar,
   };

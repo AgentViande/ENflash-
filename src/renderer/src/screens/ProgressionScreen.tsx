@@ -11,10 +11,10 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { calculateLevel, getLevelTitle, BADGE_DEFINITIONS } from '../../../shared/constants';
-import { getTodayDateString, addDaysToDate } from '../../../shared/srs/leitner';
+import { addDaysToDate, getParisDayKey } from '../../../shared/date/parisDate';
 
 export const ProgressionScreen: React.FC = () => {
-  const { db } = useApp();
+  const { db, currentDayKey } = useApp();
 
   if (!db) return null;
 
@@ -35,8 +35,8 @@ export const ProgressionScreen: React.FC = () => {
   const newCount = box1Count;
   const masteredPct = totalWords > 0 ? Math.round((masteredCount / totalWords) * 100) : 0;
 
-  // Génération des 30 derniers jours pour la Heatmap
-  const todayStr = getTodayDateString();
+  // Génération des 30 derniers jours pour la Heatmap dans le fuseau Paris
+  const todayStr = currentDayKey || getParisDayKey();
   const last30Days: Array<{ date: string; count: number }> = [];
 
   for (let i = 29; i >= 0; i--) {

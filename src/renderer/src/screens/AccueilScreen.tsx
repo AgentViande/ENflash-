@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Mascot } from '../assets/Mascot';
-import { getTodayDateString } from '../../../shared/srs/leitner';
+import { getParisDayKey, getMsUntilNextParisMidnight, formatCountdown } from '../../../shared/date/parisDate';
 import { ScreenTab } from '../components/Sidebar';
 
 interface AccueilScreenProps {
@@ -27,13 +27,23 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
   onOpenQuickAdd,
   onStartDailyTest,
 }) => {
-  const { db } = useApp();
+  const { db, currentDayKey, isDailyDoneToday, getTodayOfficialSession } = useApp();
+
+  const [countdownText, setCountdownText] = React.useState<string>(() =>
+    formatCountdown(getMsUntilNextParisMidnight())
+  );
+
+  React.useEffect(() => {
+    const timer = setInterval(() => {
+      setCountdownText(formatCountdown(getMsUntilNextParisMidnight()));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   if (!db) return null;
 
-  const todayStr = getTodayDateString();
-  const isDailyDoneToday = db.streak.lastCompletedDate === todayStr;
-  const todaySession = db.dailyTests.find((t) => t.date === todayStr);
+  const todayStr = currentDayKey || getParisDayKey();
+  const todaySession = getTodayOfficialSession();
 
   const totalWords = db.words.length;
   const masteredWords = db.words.filter((w) => w.leitnerBox === 5).length;
@@ -116,7 +126,7 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
             <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
                 <span
                   style={{
                     backgroundColor: isDailyDoneToday ? 'var(--color-success)' : 'var(--color-primary)',
@@ -125,17 +135,16 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
                     padding: '2px 8px',
                     fontSize: '0.75rem',
                     fontWeight: 800,
-                    textTransform: 'uppercase',
                   }}
                 >
-                  {isDailyDoneToday ? 'Terminé aujourd’hui' : 'Test Quotidien'}
+                  {isDailyDoneToday ? 'Test du jour : fait ✅ (prochain à 00h00)' : 'Test du jour : à faire'}
                 </span>
                 <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 600 }}>
-                  20 flashcards sélectionnées
+                  ⏳ Prochain à minuit dans {countdownText} (Europe/Paris)
                 </span>
               </div>
               <h3 style={{ fontSize: '1.4rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-                {isDailyDoneToday ? 'Test quotidien complété ✔️' : 'Test Quotidien du Jour'}
+                {isDailyDoneToday ? 'Test quotidien validé' : 'Test Quotidien du Jour'}
               </h3>
             </div>
             <div
@@ -156,11 +165,30 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
 
           <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
             {isDailyDoneToday && todaySession
-              ? `Score obtenu : ${todaySession.score} / ${todaySession.total} (${Math.round(
+              ? `Score officiel du jour : ${todaySession.score} / ${todaySession.total} (${Math.round(
                   (todaySession.score / todaySession.total) * 100
                 )} %). +${todaySession.xpEarned} XP remportés !`
               : 'Tirage pondéré intelligent : priorité maximale accordée aux mots que vous maîtrisez le moins et à ceux en retard de révision.'}
           </p>
+
+          {isDailyDoneToday && (
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                borderRadius: '8px',
+                padding: '8px 12px',
+                color: '#f59e0b',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+              }}
+            >
+              <span>ℹ️ Entraînement libre : aucune XP aujourd'hui</span>
+            </div>
+          )}
 
           <div style={{ display: 'flex', gap: '12px' }}>
             <button
@@ -182,7 +210,7 @@ export const AccueilScreen: React.FC<AccueilScreenProps> = ({
               }}
             >
               <Play size={18} fill="currentColor" />
-              <span>{isDailyDoneToday ? 'Rejouer pour s’entraîner' : 'Lancer le test (20 mots)'}</span>
+              <span>{isDailyDoneToday ? 'Rejouer en entraînement libre' : 'Lancer le test (20 mots)'}</span>
             </button>
           </div>
         </div>

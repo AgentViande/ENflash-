@@ -126,5 +126,8 @@ export function createInitialDatabase(): AppDatabase {
     settings: {
       ...DEFAULT_APP_SETTINGS,
     },
+    lastDailyTestDayKey: null,
+    lastStreakDayKey: null,
+    lastEvaluationWeekKey: null,
   };
 }

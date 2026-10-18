@@ -29,10 +29,11 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   selectedPlaylistId = null,
   onFinishDaily,
 }) => {
-  const { db, recordReview, recordDailyTest, updateSettings, playSfx } = useApp();
+  const { db, recordReview, recordDailyTest, updateSettings, playSfx, isDailyDoneToday, getTodayOfficialSession } = useApp();
 
   const [activePlaylistId, setActivePlaylistId] = useState<string | null>(selectedPlaylistId);
   const [isDailyMode, setIsDailyMode] = useState<boolean>(initialDailyMode);
+  const [isFreePracticeRun, setIsFreePracticeRun] = useState<boolean>(false);
 
   const [cards, setCards] = useState<Word[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
@@ -50,10 +51,22 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
       return;
     }
 
+    const isFree = Boolean(isDailyMode && isDailyDoneToday);
+    setIsFreePracticeRun(isFree);
+
     if (isDailyMode) {
-      // 20 cartes tirées de manière pondérée
-      const picked = pickDailyTestWords(db.words, 20, getTodayDateString());
-      setCards(picked);
+      const todayOfficial = getTodayOfficialSession();
+      // Si déjà validé aujourd'hui : entraînement libre avec EXACTEMENT les mêmes cartes
+      if (isDailyDoneToday && todayOfficial && todayOfficial.wordIds?.length > 0) {
+        const sessionWords = todayOfficial.wordIds
+          .map((id) => db.words.find((w) => w.id === id))
+          .filter(Boolean) as Word[];
+        setCards(sessionWords.length > 0 ? sessionWords : pickDailyTestWords(db.words, 20, getTodayDateString()));
+      } else {
+        // 20 cartes tirées de manière pondérée
+        const picked = pickDailyTestWords(db.words, 20, getTodayDateString());
+        setCards(picked);
+      }
     } else if (activePlaylistId) {
       const playlist = db.playlists.find((p) => p.id === activePlaylistId);
       if (playlist) {
@@ -81,7 +94,7 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
     setIsFlipped(false);
     setSessionCompleted(false);
     setDailyResults([]);
-  }, [db, isDailyMode, activePlaylistId]);
+  }, [db, isDailyMode, activePlaylistId, isDailyDoneToday, getTodayOfficialSession]);
 
   useEffect(() => {
     prepareCards();
@@ -234,7 +247,7 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
           animation: 'fadeInScale 0.3s ease',
         }}
       >
-        <Mascot mood="celebrate" size={120} className="animate-float" />
+        <Mascot mood={isFreePracticeRun ? 'happy' : 'celebrate'} size={120} className="animate-float" />
 
         <div>
           <div
@@ -242,8 +255,8 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
               display: 'inline-flex',
               alignItems: 'center',
               gap: '6px',
-              backgroundColor: 'var(--color-success-light)',
-              color: 'var(--color-success)',
+              backgroundColor: isFreePracticeRun ? 'rgba(245, 158, 11, 0.15)' : 'var(--color-success-light)',
+              color: isFreePracticeRun ? '#f59e0b' : 'var(--color-success)',
               borderRadius: '999px',
               padding: '4px 14px',
               fontSize: '0.85rem',
@@ -253,14 +266,34 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
             }}
           >
             <Sparkles size={16} />
-            <span>Session terminée !</span>
+            <span>{isFreePracticeRun ? 'Entraînement libre terminé !' : 'Session terminée !'}</span>
           </div>
           <h2 style={{ fontSize: '2rem', fontWeight: 800, color: 'var(--text-primary)' }}>
-            Félicitations ! ⚡
+            {isFreePracticeRun ? 'Bien joué pour cet entraînement ! ⚡' : 'Félicitations ! ⚡'}
           </h2>
+          {isFreePracticeRun && (
+            <div
+              style={{
+                display: 'inline-block',
+                marginTop: '6px',
+                marginBottom: '6px',
+                padding: '6px 14px',
+                backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                borderRadius: '8px',
+                color: '#f59e0b',
+                fontWeight: 700,
+                fontSize: '0.9rem',
+              }}
+            >
+              ⚠️ Entraînement libre : aucune XP aujourd'hui
+            </div>
+          )}
           <p style={{ color: 'var(--text-secondary)', fontSize: '1rem', marginTop: '4px' }}>
             {isDailyMode
-              ? `Votre test quotidien est validé ! Score : ${correctCount} / ${totalCount} (${scorePct} %)`
+              ? isFreePracticeRun
+                ? `Score de la session : ${correctCount} / ${totalCount} (${scorePct} %)`
+                : `Votre test quotidien est validé ! Score : ${correctCount} / ${totalCount} (${scorePct} %)`
               : `Vous avez révisé ${totalCount} flashcards avec succès.`}
           </p>
         </div>
@@ -301,6 +334,9 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
               <Flame size={20} />
               <span>{db.streak.currentStreak} j</span>
             </div>
+            {isFreePracticeRun && (
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Déjà validé aujourd'hui</span>
+            )}
           </div>
 
           <div
@@ -312,9 +348,12 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
             }}
           >
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 700 }}>XP GAGNÉS</span>
-            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: 'var(--color-primary)' }}>
-              +{isDailyMode ? 50 + correctCount * 5 : totalCount * 15}
+            <div style={{ fontSize: '1.6rem', fontWeight: 800, color: isFreePracticeRun ? 'var(--text-muted)' : 'var(--color-primary)' }}>
+              {isFreePracticeRun ? '+0' : `+${isDailyMode ? 50 + correctCount * 5 : totalCount * 15}`}
             </div>
+            {isFreePracticeRun && (
+              <span style={{ fontSize: '0.7rem', color: '#f59e0b' }}>0 XP aujourd'hui</span>
+            )}
           </div>
         </div>
 
@@ -401,6 +440,26 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
             />
           </div>
         </div>
+
+        {/* Badge d'avertissement en mode entraînement libre */}
+        {isDailyMode && isFreePracticeRun && (
+          <div
+            style={{
+              backgroundColor: 'rgba(245, 158, 11, 0.15)',
+              border: '1px solid rgba(245, 158, 11, 0.4)',
+              borderRadius: '8px',
+              padding: '6px 14px',
+              fontSize: '0.8rem',
+              fontWeight: 800,
+              color: '#f59e0b',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>⚠️ Entraînement libre : aucune XP aujourd'hui</span>
+          </div>
+        )}
 
         {/* Sélecteur de playlist si mode libre */}
         {!isDailyMode && (

@@ -23,10 +23,13 @@ describe('Storage & Migration System', () => {
     const store = new DatabaseStore(tempDir);
     const data = store.load();
 
-    expect(data.schemaVersion).toBe(1);
+    expect(data.schemaVersion).toBe(2);
     expect(data.words.length).toBeGreaterThan(0);
     expect(data.playlists.length).toBeGreaterThan(0);
     expect(data.settings.theme).toBe('dark');
+    expect(data.lastDailyTestDayKey).toBeNull();
+    expect(data.lastStreakDayKey).toBeNull();
+    expect(data.lastEvaluationWeekKey).toBeNull();
     expect(fs.existsSync(store.getFilePath())).toBe(true);
   });
 
@@ -73,6 +76,67 @@ describe('Storage & Migration System', () => {
     expect(migratedData.words[0].english).toBe('water');
     expect(migratedData.settings.theme).toBe('light');
     expect(migratedData.streak.currentStreak).toBe(0);
+  });
+
+  it('migre un schéma v1 vers le schéma v2 avec conversion des clés calendaires Paris sans perte', () => {
+    const v1Data = {
+      schemaVersion: 1,
+      words: [{ id: 'w1', french: 'arbre', english: 'tree' }],
+      playlists: [],
+      dailyTests: [
+        {
+          id: 'd1',
+          date: '2026-10-16',
+          completedAt: '2026-10-16T22:30:00.000Z',
+          score: 18,
+          total: 20,
+          xpEarned: 140,
+          wordIds: [],
+          results: [],
+        },
+      ],
+      weeklyEvaluations: [
+        {
+          id: 'e1',
+          date: '2026-10-11',
+          completedAt: '2026-10-11T14:00:00.000Z',
+          scorePercentage: 90,
+          estimatedLevel: 'B1',
+          xpEarned: 172,
+          answers: [],
+        },
+      ],
+      streak: {
+        currentStreak: 5,
+        maxStreak: 10,
+        lastCompletedDate: '2026-10-16',
+        streakFreezes: 1,
+        activityCalendar: { '2026-10-16': 1 },
+      },
+      gamification: {
+        xp: 450,
+        level: 3,
+        unlockedBadges: [{ id: 'first_word', unlockedAt: '2026-10-10' }],
+      },
+      settings: {
+        theme: 'dark',
+      },
+    };
+
+    const { migratedData, migrationsRun } = migrateDatabase(v1Data, 2);
+
+    expect(migrationsRun).toBe(1);
+    expect(migratedData.schemaVersion).toBe(2);
+    // Vérifie que les données sont intactes
+    expect(migratedData.gamification.xp).toBe(450);
+    expect(migratedData.gamification.level).toBe(3);
+    expect(migratedData.streak.currentStreak).toBe(5);
+    expect(migratedData.words.length).toBe(1);
+    // Vérifie le calcul des clés Paris
+    expect(migratedData.lastStreakDayKey).toBe('2026-10-16');
+    // 2026-10-16T22:30:00.000Z à Paris (UTC+2 en heure d'été) correspond au 17 octobre 2026 !
+    expect(migratedData.lastDailyTestDayKey).toBe('2026-10-17');
+    expect(migratedData.lastEvaluationWeekKey).toBe('2026-W41');
   });
 
   it('crée un fichier de sauvegarde avant migration', () => {

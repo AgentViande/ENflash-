@@ -3,7 +3,7 @@ import { AppSettings, BadgeDefinition, LeitnerBox } from '../types';
 /**
  * Version actuelle du schéma de base de données
  */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Intervalles Leitner en jours selon la boîte (1 à 5)

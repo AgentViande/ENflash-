@@ -18,7 +18,7 @@ import { Mascot } from '../assets/Mascot';
 import { shuffleArray } from '../../../shared/picker/weightedPicker';
 
 export const EvaluationScreen: React.FC = () => {
-  const { db, recordWeeklyEvaluation, playSfx } = useApp();
+  const { db, recordWeeklyEvaluation, playSfx, isWeeklyDoneThisWeek } = useApp();
 
   const [inTest, setInTest] = useState(false);
   const [testWords, setTestWords] = useState<Word[]>([]);
@@ -27,6 +27,7 @@ export const EvaluationScreen: React.FC = () => {
   const [answers, setAnswers] = useState<WeeklyAnswer[]>([]);
   const [currentAnswerResult, setCurrentAnswerResult] = useState<WeeklyAnswer | null>(null);
   const [testCompleted, setTestCompleted] = useState(false);
+  const [isFreePracticeRun, setIsFreePracticeRun] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -47,6 +48,8 @@ export const EvaluationScreen: React.FC = () => {
 
   const startEvaluation = () => {
     if (db.words.length === 0) return;
+
+    setIsFreePracticeRun(isWeeklyDoneThisWeek);
 
     // Sélectionne jusqu'à 15 mots du dictionnaire
     const count = Math.min(15, db.words.length);
@@ -427,11 +430,11 @@ export const EvaluationScreen: React.FC = () => {
             }}
           >
             <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 700 }}>XP ATTRIBUÉS</span>
-            <div style={{ fontSize: '2rem', fontWeight: 800, color: '#f59e0b' }}>
-              +{100 + Math.round(scorePct * 0.8)}
+            <div style={{ fontSize: '2rem', fontWeight: 800, color: isFreePracticeRun ? 'var(--text-muted)' : '#f59e0b' }}>
+              {isFreePracticeRun ? '+0' : `+${100 + Math.round(scorePct * 0.8)}`}
             </div>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Bonus d'évaluation écrite
+              {isFreePracticeRun ? 'Entraînement libre : déjà validée cette semaine' : "Bonus d'évaluation écrite"}
             </span>
           </div>
         </div>
@@ -541,6 +544,25 @@ export const EvaluationScreen: React.FC = () => {
           <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
             Mesurez votre niveau réel en écrivant vous-même les traductions au clavier
           </p>
+          {isWeeklyDoneThisWeek && (
+            <div
+              style={{
+                marginTop: '10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                backgroundColor: 'rgba(245, 158, 11, 0.12)',
+                border: '1px solid rgba(245, 158, 11, 0.3)',
+                borderRadius: '8px',
+                padding: '6px 12px',
+                color: '#f59e0b',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+              }}
+            >
+              <span>ℹ️ Évaluation officielle déjà validée cette semaine (+XP). Mode entraînement libre actif.</span>
+            </div>
+          )}
         </div>
 
         <button
@@ -564,7 +586,7 @@ export const EvaluationScreen: React.FC = () => {
           }}
         >
           <PenTool size={18} />
-          <span>Démarrer l'évaluation écrite</span>
+          <span>{isWeeklyDoneThisWeek ? "S'entraîner (Entraînement libre)" : "Démarrer l'évaluation écrite"}</span>
         </button>
       </div>
 

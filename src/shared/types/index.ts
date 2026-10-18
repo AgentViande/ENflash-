@@ -52,13 +52,14 @@ export interface DailyTestResultItem {
 
 export interface DailyTestSession {
   id: string;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD (clé de jour Paris)
   wordIds: string[];
   results: DailyTestResultItem[];
   score: number; // e.g. 18
   total: number; // e.g. 20
   xpEarned: number;
   completedAt: string;
+  isFreePractice?: boolean;
 }
 
 export type LevenshteinStatus = 'exact' | 'almost' | 'wrong';
@@ -82,12 +83,13 @@ export interface WeeklyEvaluation {
   estimatedLevel: EnglishLevel;
   xpEarned: number;
   completedAt: string;
+  isFreePractice?: boolean;
 }
 
 export interface StreakState {
   currentStreak: number;
   maxStreak: number;
-  lastCompletedDate: string | null; // YYYY-MM-DD
+  lastCompletedDate: string | null; // YYYY-MM-DD (clé de jour Paris)
   streakFreezes: number; // Nombre de jokers de gel disponibles
   activityCalendar: Record<string, number>; // YYYY-MM-DD -> intensité (ex: nombre d'actions / score)
 }
@@ -136,4 +138,7 @@ export interface AppDatabase {
   streak: StreakState;
   gamification: GamificationState;
   settings: AppSettings;
+  lastDailyTestDayKey: string | null;
+  lastStreakDayKey: string | null;
+  lastEvaluationWeekKey: string | null;
 }

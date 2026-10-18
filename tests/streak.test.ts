@@ -89,4 +89,59 @@ describe('Streak Calculator & Freeze Protection', () => {
     expect(res.newStreak).toBe(4);
     expect(res.newState.activityCalendar['2026-10-17']).toBe(2);
   });
+
+  it('incrémente le streak entre 23h59 (jour J) et 00h01 (jour J+1) soit 2 minutes d’écart', () => {
+    // Jour J validé à 23h59 Paris
+    const stateJourJ: StreakState = {
+      currentStreak: 3,
+      maxStreak: 3,
+      lastCompletedDate: '2026-10-18',
+      streakFreezes: 0,
+      activityCalendar: { '2026-10-18': 1 },
+    };
+
+    // Validation à 00h01 Paris le lendemain (clé de jour : 2026-10-19)
+    const res = recordDailyCompletion(stateJourJ, '2026-10-19');
+    expect(res.newStreak).toBe(4); // +1 bien compté !
+    expect(res.newState.lastCompletedDate).toBe('2026-10-19');
+  });
+
+  it('incrémente le streak à 08h00 puis le lendemain à 07h00 (23 h d’écart < 24 h glissantes)', () => {
+    // Jour J validé à 08h00
+    const stateJourJ: StreakState = {
+      currentStreak: 5,
+      maxStreak: 5,
+      lastCompletedDate: '2026-10-18',
+      streakFreezes: 0,
+      activityCalendar: { '2026-10-18': 1 },
+    };
+
+    // Test le lendemain à 07h00 (moins de 24h d'écart réel, mais nouveau jour calendaire !)
+    const res = recordDailyCompletion(stateJourJ, '2026-10-19');
+    expect(res.newStreak).toBe(6); // Bien augmenté de 1 !
+    expect(res.newState.lastCompletedDate).toBe('2026-10-19');
+  });
+
+  it('ignore le recul de l’horloge système sans altérer le streak ni accorder de récompense (anti-triche)', () => {
+    const state: StreakState = {
+      currentStreak: 10,
+      maxStreak: 10,
+      lastCompletedDate: '2026-10-18',
+      streakFreezes: 1,
+      activityCalendar: { '2026-10-18': 1 },
+    };
+
+    // Tentative de validation avec une date antérieure au dernier jour validé
+    const res = recordDailyCompletion(state, '2026-10-17');
+    expect(res.newStreak).toBe(10);
+    expect(res.isRollback).toBe(true);
+    expect(res.freezeEarned).toBe(false);
+    expect(res.newState.lastCompletedDate).toBe('2026-10-18'); // Non écrasé
+
+    // Évaluation avant aujourd'hui avec horloge reculée
+    const evalRes = evaluateStreakBeforeToday(state, '2026-10-17');
+    expect(evalRes.currentStreak).toBe(10);
+    expect(evalRes.streakLost).toBe(false);
+    expect(evalRes.freezeUsed).toBe(false);
+  });
 });

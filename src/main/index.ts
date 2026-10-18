@@ -67,7 +67,8 @@ function createWindow(): void {
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(process.env.DIST, 'index.html')).catch((err) => {
+    const distPath = process.env.DIST || path.join(__dirname, '../../dist');
+    mainWindow.loadFile(path.join(distPath, 'index.html')).catch((err) => {
       console.error('Erreur chargement dist/index.html:', err);
     });
   }

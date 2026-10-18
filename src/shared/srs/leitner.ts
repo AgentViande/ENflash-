@@ -1,25 +1,14 @@
 import { LeitnerBox, ReviewHistoryEntry, Word, WordStatus } from '../types';
 import { LEITNER_INTERVALS_DAYS } from '../constants';
+import { addDaysToDate, getParisDayKey } from '../date/parisDate';
+
+export { addDaysToDate, getParisDayKey };
 
 /**
- * Ajoute un nombre de jours à une date donnée et retourne une chaîne YYYY-MM-DD
+ * Retourne la date courante dans le fuseau Europe/Paris au format YYYY-MM-DD
  */
-export function addDaysToDate(dateStr: string, days: number): string {
-  const [year, month, day] = dateStr.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().split('T')[0];
-}
-
-/**
- * Retourne la date locale du jour au format YYYY-MM-DD
- */
-export function getTodayDateString(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+export function getTodayDateString(date: Date | number | string = new Date()): string {
+  return getParisDayKey(date);
 }
 
 /**

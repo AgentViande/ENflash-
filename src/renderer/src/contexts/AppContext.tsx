@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback, useMemo } from 'react';
 import confetti from 'canvas-confetti';
 import {
   AppDatabase,
@@ -9,12 +9,20 @@ import {
   WeeklyEvaluation,
   WeeklyAnswer,
   DailyTestResultItem,
-  LevenshteinStatus,
 } from '../../../shared/types';
-import { BADGE_DEFINITIONS, calculateLevel } from '../../../shared/constants';
-import { applyReviewResult, getTodayDateString } from '../../../shared/srs/leitner';
+import { calculateLevel } from '../../../shared/constants';
+import { applyReviewResult } from '../../../shared/srs/leitner';
 import { recordDailyCompletion } from '../../../shared/streak/streakCalculator';
 import { estimateEnglishLevel } from '../../../shared/levenshtein/correction';
+import {
+  getParisDayKey,
+  getParisWeekKey,
+  getMsUntilNextParisMidnight,
+} from '../../../shared/date/parisDate';
+import {
+  processDailyTestCompletion,
+  processWeeklyEvaluationCompletion,
+} from '../../../shared/daily/dailyTestManager';
 import {
   playSuccessSound,
   playWrongSound,
@@ -33,6 +41,11 @@ export interface AddWordResult {
 interface AppContextType {
   db: AppDatabase | null;
   loading: boolean;
+  currentDayKey: string;
+  currentWeekKey: string;
+  isDailyDoneToday: boolean;
+  isWeeklyDoneThisWeek: boolean;
+  getTodayOfficialSession: () => DailyTestSession | undefined;
   // Mots
   addWord: (wordData: {
     french: string;
@@ -71,6 +84,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [db, setDb] = useState<AppDatabase | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [newBadgeUnlocked, setNewBadgeUnlocked] = useState<string | null>(null);
+  const [currentDayKey, setCurrentDayKey] = useState<string>(() => getParisDayKey());
+  const [currentWeekKey, setCurrentWeekKey] = useState<string>(() => getParisWeekKey());
 
   // Charger la base de données au montage
   const refreshDatabase = useCallback(async () => {
@@ -90,6 +105,54 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     refreshDatabase();
+  }, [refreshDatabase]);
+
+  // Synchronisation automatique à minuit heure de Paris et détection veille / focus
+  useEffect(() => {
+    let timerId: ReturnType<typeof setTimeout> | null = null;
+
+    const scheduleNextMidnight = () => {
+      const ms = getMsUntilNextParisMidnight();
+      // Ajouter 500 ms de marge pour franchir nettement minuit
+      timerId = setTimeout(() => {
+        const nextDay = getParisDayKey();
+        const nextWeek = getParisWeekKey();
+        setCurrentDayKey(nextDay);
+        setCurrentWeekKey(nextWeek);
+        refreshDatabase();
+        scheduleNextMidnight();
+      }, ms + 500);
+    };
+
+    scheduleNextMidnight();
+
+    const checkDateChange = () => {
+      const latestDay = getParisDayKey();
+      const latestWeek = getParisWeekKey();
+      setCurrentDayKey((prevDay) => {
+        if (latestDay !== prevDay) {
+          setCurrentWeekKey(latestWeek);
+          refreshDatabase();
+          return latestDay;
+        }
+        return prevDay;
+      });
+    };
+
+    window.addEventListener('focus', checkDateChange);
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        checkDateChange();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (timerId) clearTimeout(timerId);
+      window.removeEventListener('focus', checkDateChange);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [refreshDatabase]);
 
   // Sauvegarder dans Electron
@@ -205,6 +268,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [playSfx, triggerConfetti]
   );
 
+  // État du jour et de la semaine calculés
+  const isDailyDoneToday = useMemo(() => {
+    if (!db) return false;
+    return db.lastDailyTestDayKey === currentDayKey;
+  }, [db, currentDayKey]);
+
+  const isWeeklyDoneThisWeek = useMemo(() => {
+    if (!db) return false;
+    return db.lastEvaluationWeekKey === currentWeekKey;
+  }, [db, currentWeekKey]);
+
+  const getTodayOfficialSession = useCallback((): DailyTestSession | undefined => {
+    if (!db) return undefined;
+    const sessions = db.dailyTests.filter((t) => t.date === currentDayKey && !t.isFreePractice);
+    return sessions[sessions.length - 1];
+  }, [db, currentDayKey]);
+
   // 1. Ajouter un mot
   const addWord = useCallback(
     async (
@@ -225,7 +305,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         return { success: false, isDuplicate: true, duplicateWord: duplicate };
       }
 
-      const today = getTodayDateString();
+      const today = getParisDayKey();
       const newWord: Word = {
         id: 'w_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         french: wordData.french.trim(),
@@ -285,14 +365,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [db, persistDb]
   );
 
-  // 4. Enregistrer une révision flashcard
+  // 4. Enregistrer une révision flashcard libre
   const recordReview = useCallback(
     async (wordId: string, success: boolean, mode: 'flashcard' | 'daily' | 'eval' = 'flashcard') => {
       if (!db) return;
       const targetWord = db.words.find((w) => w.id === wordId);
       if (!targetWord) return;
 
-      const updatedWord = applyReviewResult(targetWord, success, mode);
+      const today = getParisDayKey();
+      const updatedWord = applyReviewResult(targetWord, success, mode, today);
       const isMastered = updatedWord.leitnerBox === 5;
 
       const updatedWords = db.words.map((w) => (w.id === wordId ? updatedWord : w));
@@ -307,108 +388,62 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     [db, checkBadgesAndXp, persistDb]
   );
 
-  // 5. Enregistrer le test quotidien
+  // 5. Enregistrer le test quotidien (officiel 1 fois par jour Paris, sinon entraînement libre sans XP/streak)
   const recordDailyTest = useCallback(
     async (results: DailyTestResultItem[]): Promise<DailyTestSession> => {
       if (!db) throw new Error('Base non chargée');
 
-      const today = getTodayDateString();
-      const score = results.filter((r) => r.success).length;
-      const total = results.length;
-      const xpEarned = 50 + score * 5;
-
-      // Mettre à jour chaque mot révisé selon Leitner
-      let updatedWords = [...db.words];
-      for (const res of results) {
-        const w = updatedWords.find((item) => item.id === res.wordId);
-        if (w) {
-          const updated = applyReviewResult(w, res.success, 'daily', today);
-          updatedWords = updatedWords.map((item) => (item.id === res.wordId ? updated : item));
-        }
-      }
-
-      // Mise à jour du streak et attribution de jokers de gel
-      const streakUpdate = recordDailyCompletion(db.streak, today);
-
-      const session: DailyTestSession = {
-        id: 'daily_' + Date.now(),
-        date: today,
-        wordIds: results.map((r) => r.wordId),
-        results,
-        score,
-        total,
-        xpEarned,
-        completedAt: new Date().toISOString(),
-      };
+      const res = processDailyTestCompletion(db, results, new Date());
 
       let updatedDb: AppDatabase = {
         ...db,
-        words: updatedWords,
-        streak: streakUpdate.newState,
-        dailyTests: [session, ...db.dailyTests],
+        words: res.updatedWords,
+        streak: res.updatedStreak,
+        dailyTests: [res.session, ...db.dailyTests],
+        lastDailyTestDayKey: res.newDailyTestDayKey,
+        lastStreakDayKey: res.newStreakDayKey,
       };
 
-      updatedDb = checkBadgesAndXp(updatedDb, xpEarned, { streak: streakUpdate.newStreak });
+      if (res.isOfficial) {
+        updatedDb = checkBadgesAndXp(updatedDb, res.xpEarned, { streak: res.newStreak });
+        await persistDb(updatedDb);
+        playSfx('flame');
+        triggerConfetti();
+      } else {
+        await persistDb(updatedDb);
+        playSfx(res.session.score >= res.session.total / 2 ? 'success' : 'wrong');
+      }
 
-      await persistDb(updatedDb);
-      playSfx('flame');
-      triggerConfetti();
-
-      return session;
+      return res.session;
     },
     [db, checkBadgesAndXp, persistDb, playSfx, triggerConfetti]
   );
 
-  // 6. Enregistrer l'évaluation hebdomadaire
+  // 6. Enregistrer l'évaluation hebdomadaire (XP une seule fois par semaine calendaire Paris)
   const recordWeeklyEvaluation = useCallback(
     async (answers: WeeklyAnswer[]): Promise<WeeklyEvaluation> => {
       if (!db) throw new Error('Base non chargée');
 
-      const today = getTodayDateString();
-      const exactCount = answers.filter((a) => a.status === 'exact').length;
-      const almostCount = answers.filter((a) => a.status === 'almost').length;
-      // Les réponses presque parfaites rapportent 0.5 point
-      const totalPoints = exactCount + almostCount * 0.5;
-      const scorePercentage = Math.round((totalPoints / Math.max(1, answers.length)) * 100);
-
-      const masteredCount = db.words.filter((w) => w.leitnerBox === 5).length;
-      const estimatedLevel = estimateEnglishLevel(scorePercentage, masteredCount);
-      const xpEarned = 100 + Math.round(scorePercentage * 0.8);
-
-      const evaluation: WeeklyEvaluation = {
-        id: 'eval_' + Date.now(),
-        date: today,
-        answers,
-        scorePercentage,
-        estimatedLevel,
-        xpEarned,
-        completedAt: new Date().toISOString(),
-      };
-
-      // Mettre à jour les mots de l'évaluation dans le Leitner
-      let updatedWords = [...db.words];
-      for (const ans of answers) {
-        const w = updatedWords.find((item) => item.id === ans.wordId);
-        if (w) {
-          const success = ans.status === 'exact' || ans.status === 'almost';
-          const updated = applyReviewResult(w, success, 'eval', today);
-          updatedWords = updatedWords.map((item) => (item.id === ans.wordId ? updated : item));
-        }
-      }
+      const res = processWeeklyEvaluationCompletion(db, answers, new Date());
 
       let updatedDb: AppDatabase = {
         ...db,
-        words: updatedWords,
-        weeklyEvaluations: [evaluation, ...db.weeklyEvaluations],
+        words: res.updatedWords,
+        weeklyEvaluations: [res.evaluation, ...db.weeklyEvaluations],
+        lastEvaluationWeekKey: res.newEvaluationWeekKey,
       };
 
-      updatedDb = checkBadgesAndXp(updatedDb, xpEarned, { evalScore: scorePercentage });
+      if (res.isOfficial) {
+        updatedDb = checkBadgesAndXp(updatedDb, res.xpEarned, { evalScore: res.scorePercentage });
+        await persistDb(updatedDb);
+        playSfx('levelUp');
+        triggerConfetti();
+      } else {
+        await persistDb(updatedDb);
+        playSfx(res.scorePercentage >= 50 ? 'success' : 'wrong');
+      }
 
-      await persistDb(updatedDb);
-      playSfx('levelUp');
-      triggerConfetti();
-
-      return evaluation;
+      return res.evaluation;
     },
     [db, checkBadgesAndXp, persistDb, playSfx, triggerConfetti]
   );
@@ -494,6 +529,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       value={{
         db,
         loading,
+        currentDayKey,
+        currentWeekKey,
+        isDailyDoneToday,
+        isWeeklyDoneThisWeek,
+        getTodayOfficialSession,
         addWord,
         updateWord,
         deleteWord,

@@ -1,5 +1,6 @@
 import { AppDatabase } from '../../shared/types';
 import { CURRENT_SCHEMA_VERSION, DEFAULT_APP_SETTINGS } from '../../shared/constants';
+import { getParisDayKey, getParisWeekKey } from '../../shared/date/parisDate';
 
 export interface MigrationStep {
   version: number;
@@ -38,6 +39,55 @@ export const MIGRATIONS: MigrationStep[] = [
           ...DEFAULT_APP_SETTINGS,
           ...(data?.settings || {}),
         },
+        lastDailyTestDayKey: null,
+        lastStreakDayKey: null,
+        lastEvaluationWeekKey: null,
+      };
+    },
+  },
+  {
+    version: 2,
+    description: 'Migration vers les clés calendaires Europe/Paris (lastDailyTestDayKey, lastStreakDayKey, lastEvaluationWeekKey)',
+    up: (data: any): AppDatabase => {
+      // Déterminer lastDailyTestDayKey depuis le dernier test quotidien ou lastCompletedDate
+      let lastDailyTestDayKey: string | null = data?.lastDailyTestDayKey || null;
+      if (!lastDailyTestDayKey) {
+        if (Array.isArray(data?.dailyTests) && data.dailyTests.length > 0) {
+          const latestTest = data.dailyTests[0];
+          lastDailyTestDayKey = getParisDayKey(latestTest.completedAt || latestTest.date);
+        } else if (data?.streak?.lastCompletedDate) {
+          lastDailyTestDayKey = getParisDayKey(data.streak.lastCompletedDate);
+        }
+      }
+
+      // Déterminer lastStreakDayKey depuis streak.lastCompletedDate
+      let lastStreakDayKey: string | null = data?.lastStreakDayKey || null;
+      if (!lastStreakDayKey && data?.streak?.lastCompletedDate) {
+        lastStreakDayKey = getParisDayKey(data.streak.lastCompletedDate);
+      }
+
+      // Déterminer lastEvaluationWeekKey depuis la dernière évaluation
+      let lastEvaluationWeekKey: string | null = data?.lastEvaluationWeekKey || null;
+      if (!lastEvaluationWeekKey && Array.isArray(data?.weeklyEvaluations) && data.weeklyEvaluations.length > 0) {
+        const latestEval = data.weeklyEvaluations[0];
+        lastEvaluationWeekKey = getParisWeekKey(latestEval.completedAt || latestEval.date);
+      }
+
+      // Normaliser lastCompletedDate dans streak au format Paris si présent
+      const normalizedLastCompleted = data?.streak?.lastCompletedDate
+        ? getParisDayKey(data.streak.lastCompletedDate)
+        : null;
+
+      return {
+        ...data,
+        schemaVersion: 2,
+        streak: {
+          ...data.streak,
+          lastCompletedDate: normalizedLastCompleted,
+        },
+        lastDailyTestDayKey,
+        lastStreakDayKey,
+        lastEvaluationWeekKey,
       };
     },
   },
