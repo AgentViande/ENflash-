@@ -59,6 +59,7 @@ const api: ElectronAPI = {
   cancelLlmDownload: () => ipcRenderer.invoke('llm:cancelDownload'),
   deleteLlmModel: (modelType) => ipcRenderer.invoke('llm:deleteModel', modelType),
   testLlmSpeed: (modelType) => ipcRenderer.invoke('llm:testSpeed', modelType),
+  preloadLlmModel: (modelType) => ipcRenderer.invoke('llm:preloadModel', modelType),
   generateSentence: (params) => ipcRenderer.invoke('llm:generateSentence', params),
   resolveSentenceCascade: (params) => ipcRenderer.invoke('llm:resolveCascade', params),
 
@@ -79,6 +80,21 @@ const api: ElectronAPI = {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('llm:downloadProgress', handler);
     return () => ipcRenderer.removeListener('llm:downloadProgress', handler);
+  },
+  onLlmStatusUpdate: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('llm:statusUpdate', handler);
+    return () => ipcRenderer.removeListener('llm:statusUpdate', handler);
+  },
+  onLlmTokenChunk: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('llm:tokenChunk', handler);
+    return () => ipcRenderer.removeListener('llm:tokenChunk', handler);
+  },
+  onBackgroundSentenceReady: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('llm:backgroundSentenceReady', handler);
+    return () => ipcRenderer.removeListener('llm:backgroundSentenceReady', handler);
   },
   onSentenceQueueProgress: (callback) => {
     const handler = (_event: any, data: any) => callback(data);

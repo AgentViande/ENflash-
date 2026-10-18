@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   Search,
   Plus,
@@ -16,7 +16,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { Word, LeitnerBox, ExampleSourceType } from '../../../shared/types';
+import { Word, LeitnerBox, ExampleSourceType, LlmState } from '../../../shared/types';
 import { speakWord, speakText } from '../utils/audio';
 
 interface MesMotsScreenProps {
@@ -47,8 +47,45 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
   const [editTags, setEditTags] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editBox, setEditBox] = useState<LeitnerBox>(1);
+  const [editLlmState, setEditLlmState] = useState<LlmState>('idle');
+  const [editBackgroundOffer, setEditBackgroundOffer] = useState<{
+    sentence: string;
+    source?: ExampleSourceType;
+  } | null>(null);
 
   const isCancelledEditRef = useRef<boolean>(false);
+
+  // Écoute des statuts LLM, streaming de tokens et phrases reçues en arrière-plan
+  useEffect(() => {
+    if (!editingWord) {
+      setEditLlmState('idle');
+      setEditBackgroundOffer(null);
+      return;
+    }
+
+    const unsubStatus = window.api?.onLlmStatusUpdate?.((data) => {
+      setEditLlmState(data.state);
+    });
+
+    const unsubToken = window.api?.onLlmTokenChunk?.((data) => {
+      if (isGeneratingEditExample && data.fullText) {
+        setEditExample(data.fullText);
+        setEditExampleSource('local_llm');
+      }
+    });
+
+    const unsubBgReady = window.api?.onBackgroundSentenceReady?.((data) => {
+      if (data.english.trim().toLowerCase() === editEnglish.trim().toLowerCase()) {
+        setEditBackgroundOffer({ sentence: data.sentence, source: data.source });
+      }
+    });
+
+    return () => {
+      unsubStatus?.();
+      unsubToken?.();
+      unsubBgReady?.();
+    };
+  }, [editingWord, isGeneratingEditExample, editEnglish]);
 
   if (!db) return null;
 
@@ -100,16 +137,23 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     setEditNote(w.note || '');
     setEditBox(w.leitnerBox);
     setEditGenerationError(null);
+    setEditBackgroundOffer(null);
+    setEditLlmState('idle');
+    if (db?.settings?.localLlmEnabled && window.api?.preloadLlmModel) {
+      window.api.preloadLlmModel(db.settings.localLlmModel || 'standard').catch(() => {});
+    }
   };
 
   const handleGenerateEditExample = async (skipCurrent: boolean = false) => {
     if (!editEnglish.trim() || isGeneratingEditExample) return;
     setIsGeneratingEditExample(true);
     setEditGenerationError(null);
+    setEditBackgroundOffer(null);
     isCancelledEditRef.current = false;
 
+    // Timeout de sécurité global généreux (80s max pour le premier chargement disque)
     const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
-      (_, reject) => setTimeout(() => reject(new Error('Délai maximal dépassé (15s)')), 15000)
+      (_, reject) => setTimeout(() => reject(new Error('Délai maximal dépassé')), 80000)
     );
 
     try {
@@ -124,6 +168,7 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           localLlmModel: db?.settings.localLlmModel,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
+          priority: 'immediate',
         });
 
         const res = await Promise.race([genPromise, timeoutPromise]);
@@ -143,12 +188,14 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
       }
     } finally {
       setIsGeneratingEditExample(false);
+      setEditLlmState('idle');
     }
   };
 
   const handleCancelEditGenerate = () => {
     isCancelledEditRef.current = true;
     setIsGeneratingEditExample(false);
+    setEditLlmState('idle');
   };
 
   const handlePlayEditExample = async () => {
@@ -173,8 +220,9 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     setGeneratingWordId(word.id);
     setRowGenerationError(null);
 
+    // Timeout de sécurité global généreux (80s max pour le premier chargement disque)
     const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
-      (_, reject) => setTimeout(() => reject(new Error('Délai dépassé (15s)')), 15000)
+      (_, reject) => setTimeout(() => reject(new Error('Délai dépassé')), 80000)
     );
 
     try {
@@ -189,6 +237,7 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           localLlmModel: db?.settings.localLlmModel,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
+          priority: 'immediate',
         });
 
         const res = await Promise.race([genPromise, timeoutPromise]);
@@ -938,7 +987,11 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       {isGeneratingEditExample ? (
                         <>
                           <RotateCw size={13} className="animate-spin" />
-                          <span>Génération...</span>
+                          <span>
+                            {editLlmState === 'loading_model'
+                              ? 'Chargement du modèle… (1ère fois)'
+                              : 'Génération...'}
+                          </span>
                         </>
                       ) : (
                         <>
@@ -1007,6 +1060,67 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                   placeholder="Ex : An apple a day keeps the doctor away. (ou cliquez sur ✨ Générer une phrase)"
                   style={{ width: '100%' }}
                 />
+
+                {/* Proposition en arrière-plan si une phrase IA arrive après le dictionnaire */}
+                {editBackgroundOffer && (
+                  <div
+                    style={{
+                      marginTop: '6px',
+                      padding: '8px 12px',
+                      backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                      border: '1px solid rgba(99, 102, 241, 0.3)',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.8rem',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '6px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 700, color: 'var(--color-primary)' }}>
+                        💡 Une phrase IA de meilleure qualité est prête :
+                      </span>
+                      <div style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditExample(editBackgroundOffer.sentence);
+                            setEditExampleSource(editBackgroundOffer.source || 'local_llm');
+                            setEditBackgroundOffer(null);
+                          }}
+                          style={{
+                            background: 'var(--color-primary)',
+                            color: '#fff',
+                            border: 'none',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            fontSize: '0.75rem',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Remplacer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditBackgroundOffer(null)}
+                          style={{
+                            background: 'transparent',
+                            color: 'var(--text-muted)',
+                            border: 'none',
+                            fontSize: '0.75rem',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Ignorer
+                        </button>
+                      </div>
+                    </div>
+                    <div style={{ fontStyle: 'italic', color: 'var(--text-secondary)' }}>
+                      « {editBackgroundOffer.sentence} »
+                    </div>
+                  </div>
+                )}
 
                 {/* Message d'erreur avec lien direct vers le Centre IA */}
                 {editGenerationError && (

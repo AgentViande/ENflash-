@@ -19,6 +19,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     startReminderScheduler(true, initialData.settings.dailyReminderTime);
   }
 
+  // Préchauffage automatique du modèle local en tâche de fond au lancement de l'application
+  if (initialData.settings?.localLlmEnabled) {
+    setTimeout(() => {
+      llmManager.preloadModel(initialData.settings.localLlmModel || 'standard').catch((err) => {
+        console.warn('[LlmManager] Préchauffage automatique au lancement:', err);
+      });
+    }, 2500);
+  }
+
   // --- Base de données ---
   ipcMain.handle('db:get', async (): Promise<AppDatabase> => {
     return store.load();
@@ -286,6 +295,13 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     'llm:testSpeed',
     async (_event, modelType: LocalLlmModelType = 'standard') => {
       return llmManager.testSpeed(modelType);
+    }
+  );
+
+  ipcMain.handle(
+    'llm:preloadModel',
+    async (_event, modelType: LocalLlmModelType = 'standard') => {
+      return llmManager.preloadModel(modelType);
     }
   );
 

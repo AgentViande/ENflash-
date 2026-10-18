@@ -12,6 +12,7 @@ import {
   SentenceQueueStats,
   SentenceQueueItem,
   ExampleSourceType,
+  LlmStatusEvent,
 } from '../shared/types';
 
 export type { AudioEngineStatus };
@@ -86,6 +87,7 @@ export interface ElectronAPI {
   cancelLlmDownload: () => Promise<boolean>;
   deleteLlmModel: (modelType?: LocalLlmModelType) => Promise<boolean>;
   testLlmSpeed: (modelType?: LocalLlmModelType) => Promise<SpeedTestResult>;
+  preloadLlmModel: (modelType?: LocalLlmModelType) => Promise<boolean>;
   generateSentence: (params: {
     english: string;
     french: string;
@@ -104,7 +106,16 @@ export interface ElectronAPI {
     aiApiKey?: string;
     aiApiEndpoint?: string;
     skipSentence?: string;
-  }) => Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>;
+    priority?: 'normal' | 'immediate';
+  }) => Promise<{
+    sentence?: string;
+    source?: ExampleSourceType;
+    error?: string;
+    durationMs?: number;
+    isSlow?: boolean;
+    recommendedModel?: LocalLlmModelType;
+    backgroundIaSentence?: string;
+  } | null>;
 
   // File d'attente des phrases
   enqueueSentence: (params: {
@@ -127,6 +138,9 @@ export interface ElectronAPI {
 
   // Événements LLM & Phrases
   onLlmDownloadProgress?: (callback: (data: { modelType: LocalLlmModelType; progress: number; loadedBytes: number; totalBytes: number; speedFormatted?: string }) => void) => () => void;
+  onLlmStatusUpdate?: (callback: (data: LlmStatusEvent) => void) => () => void;
+  onLlmTokenChunk?: (callback: (data: { chunk: string; fullText: string }) => void) => () => void;
+  onBackgroundSentenceReady?: (callback: (data: { english: string; sentence: string; source: ExampleSourceType }) => void) => () => void;
   onSentenceQueueProgress?: (callback: (stats: SentenceQueueStats) => void) => () => void;
   onSentenceGenerated?: (callback: (data: { wordId: string; sentence: string; source: ExampleSourceType }) => void) => () => void;
 

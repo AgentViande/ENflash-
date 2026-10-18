@@ -262,6 +262,25 @@ export class SentenceQueue {
     this.triggerProcessing();
   }
 
+  private immediatePauseCount = 0;
+
+  public pauseForImmediateRequest(): void {
+    this.immediatePauseCount++;
+    console.log('[SentenceQueue] ⏸️ File suspendue pour donner la priorité absolue à la requête utilisateur');
+  }
+
+  public resumeAfterImmediateRequest(): void {
+    this.immediatePauseCount = Math.max(0, this.immediatePauseCount - 1);
+    if (this.immediatePauseCount === 0) {
+      console.log('[SentenceQueue] ▶️ Reprise de la file après requête utilisateur');
+      this.triggerProcessing();
+    }
+  }
+
+  public isPausedForImmediate(): boolean {
+    return this.immediatePauseCount > 0;
+  }
+
   public setSessionActive(isActive: boolean): void {
     this.isSessionPaused = isActive;
     this.notifyProgress();
@@ -327,7 +346,7 @@ export class SentenceQueue {
   }
 
   private async processNextItem(): Promise<void> {
-    if (this.isPaused || this.isSessionPaused) {
+    if (this.isPaused || this.isSessionPaused || this.isPausedForImmediate()) {
       this.isProcessing = false;
       this.currentProcessingWord = undefined;
       return;

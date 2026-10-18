@@ -1348,7 +1348,72 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
             <div style={{ fontSize: '0.82rem', color: 'var(--color-primary)', fontWeight: 600 }}>
               💡 Recommandation : {hardwareInfo?.recommendation || 'Le modèle Standard ou Léger fonctionne sur votre PC.'}
             </div>
+            {(llmStatusStandard?.lastGenerationDurationMs || llmStatusLight?.lastGenerationDurationMs) && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                ⏱️ Dernier temps mesuré :{' '}
+                <strong>
+                  {llmStatusStandard?.lastGenerationDurationMs
+                    ? `${(llmStatusStandard.lastGenerationDurationMs / 1000).toFixed(1)} s (Standard 1,5B)`
+                    : ''}
+                  {llmStatusLight?.lastGenerationDurationMs
+                    ? `${(llmStatusLight.lastGenerationDurationMs / 1000).toFixed(1)} s (Léger 0,5B)`
+                    : ''}
+                </strong>
+              </div>
+            )}
           </div>
+
+          {/* Bannière d'auto-adaptation de performance si la génération standard est lente (>3 s) */}
+          {settings.localLlmModel === 'standard' &&
+            (llmStatusStandard?.lastGenerationDurationMs || 0) > 3000 && (
+              <div
+                style={{
+                  backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.35)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: '14px 18px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '12px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <AlertTriangle size={20} color="#f59e0b" style={{ flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
+                      Génération mesurée à {((llmStatusStandard?.lastGenerationDurationMs || 0) / 1000).toFixed(1)} s par phrase
+                    </div>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
+                      Le modèle Standard (1,5B) demande plus de calculs sur votre processeur. Passer au modèle Léger (0,5B) génère 3× plus vite (~0,6 s) et divise par deux l'usage mémoire.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => {
+                    if (!llmStatusLight?.isInstalled) {
+                      handleDownloadModel('light');
+                    } else {
+                      updateSettings({ localLlmModel: 'light', localLlmEnabled: true });
+                      showToast('Modèle Léger (0,5B) activé !');
+                    }
+                  }}
+                  style={{
+                    backgroundColor: '#f59e0b',
+                    color: '#000',
+                    fontWeight: 800,
+                    fontSize: '0.8rem',
+                    padding: '8px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {llmStatusLight?.isInstalled ? 'Passer au modèle Léger (0,5B) ➔' : 'Installer le modèle Léger (0,5B) ➔'}
+                </button>
+              </div>
+            )}
 
           {/* Cartes des modèles */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
@@ -1386,6 +1451,12 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
                 Haute qualité de vocabulaire, phrases naturelles de niveau A2/B1 parfaitement adaptées aux flashcards.
               </p>
+
+              {llmStatusStandard?.lastGenerationDurationMs ? (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Temps de génération : <strong>{(llmStatusStandard.lastGenerationDurationMs / 1000).toFixed(1)} s</strong>
+                </div>
+              ) : null}
 
               {/* Téléchargement en cours standard */}
               {isDownloadingLlm && downloadLlmProgress?.modelType === 'standard' && (
@@ -1493,6 +1564,12 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
               <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0 }}>
                 Très rapide et économe en mémoire (idéal pour PC portables et configurations modestes).
               </p>
+
+              {llmStatusLight?.lastGenerationDurationMs ? (
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                  Temps de génération : <strong>{(llmStatusLight.lastGenerationDurationMs / 1000).toFixed(1)} s</strong>
+                </div>
+              ) : null}
 
               {/* Téléchargement en cours léger */}
               {isDownloadingLlm && downloadLlmProgress?.modelType === 'light' && (

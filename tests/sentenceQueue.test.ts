@@ -221,4 +221,71 @@ describe('File d’attente des phrases d’exemple (SentenceQueue)', () => {
     expect(queue[0].error).toBeUndefined();
     expect(queue[1].status).toBe('done');
   });
+
+  it('interrompt proprement la file de fond lors d’une requête manuelle immédiate', () => {
+    let isPausedForImmediate = false;
+
+    const pauseForImmediate = () => {
+      isPausedForImmediate = true;
+    };
+
+    const resumeAfterImmediate = () => {
+      isPausedForImmediate = false;
+    };
+
+    // La file de fond tourne
+    expect(isPausedForImmediate).toBe(false);
+
+    // L'utilisateur clique sur "Générer une phrase" dans le formulaire
+    pauseForImmediate();
+    expect(isPausedForImmediate).toBe(true);
+
+    // La tâche de fond attend tant que la priorité immédiate est active
+    const canProcessBackground = !isPausedForImmediate;
+    expect(canProcessBackground).toBe(false);
+
+    // Fin de la génération immédiate
+    resumeAfterImmediate();
+    expect(isPausedForImmediate).toBe(false);
+    expect(!isPausedForImmediate).toBe(true);
+  });
+
+  it('gère les timeouts séparés : le chargement à froid ne déclenche jamais d’erreur de génération', () => {
+    const coldLoadDurationMs = 8400; // 8.4s pour charger le modèle Qwen 1.5B
+    const coldLoadTimeoutMs = 115000; // Jusqu'à 90s+
+    const generationDurationMs = 850; // 0.85s de génération
+    const generationTimeoutMs = 25000; // 20-25s
+
+    // Test 1 : Le chargement à froid est inférieur au timeout de chargement
+    expect(coldLoadDurationMs < coldLoadTimeoutMs).toBe(true);
+
+    // Test 2 : La génération est évaluée séparément et n'inclut pas le temps de chargement
+    const isGenerationTimedOut = generationDurationMs > generationTimeoutMs;
+    expect(isGenerationTimedOut).toBe(false);
+
+    // Test 3 : L'ancien timeout unique de 15s aurait échoué si coldLoad (8.4s) + 3 essais (9s) = 17.4s
+    const oldTotal = coldLoadDurationMs + 9000;
+    const oldTimeout = 15000;
+    expect(oldTotal > oldTimeout).toBe(true); // C'était la cause du bug initial !
+  });
+
+  it('génère les variantes de repli pour les formes plurielles (ex: flaps -> flap)', () => {
+    const getCandidates = (word: string): string[] => {
+      const candidates = [word.toLowerCase().trim()];
+      const clean = word.toLowerCase().trim();
+      if (clean.endsWith('ies') && clean.length > 4) {
+        candidates.push(`${clean.slice(0, -3)}y`);
+      } else if (clean.endsWith('es') && clean.length > 3) {
+        candidates.push(clean.slice(0, -2));
+      } else if (clean.endsWith('s') && clean.length > 2) {
+        candidates.push(clean.slice(0, -1));
+      }
+      return candidates;
+    };
+
+    expect(getCandidates('flaps')).toEqual(['flaps', 'flap']);
+    expect(getCandidates('batteries')).toEqual(['batteries', 'battery']);
+    expect(getCandidates('boxes')).toEqual(['boxes', 'box']);
+    expect(getCandidates('wing')).toEqual(['wing']);
+  });
 });

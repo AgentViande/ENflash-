@@ -12,6 +12,7 @@ import {
   ExampleSourceType,
 } from '../../shared/types';
 import { validateSentenceQuality } from './qualityControl';
+import { getSentenceQueue } from './sentenceQueue';
 
 export interface ModelMetadata {
   id: LocalLlmModelType;
@@ -68,6 +69,10 @@ export class LlmManager {
   private isLoaded = false;
   private currentLoadedModelType: LocalLlmModelType | null = null;
 
+  // Mesures de performance pour auto-adaptation
+  private lastGenerationDurationMs: number = 0;
+  private generationDurations: number[] = [];
+
   private constructor() {
     this.modelsDir = path.join(app.getPath('userData'), 'models', 'llm');
     this.ensureDirs();
@@ -101,6 +106,24 @@ export class LlmManager {
     } catch {
       return false;
     }
+  }
+
+  public getLastGenerationDuration(): number {
+    return this.lastGenerationDurationMs;
+  }
+
+  public getAverageGenerationDuration(): number {
+    if (this.generationDurations.length === 0) return 0;
+    const sum = this.generationDurations.reduce((a, b) => a + b, 0);
+    return Math.round(sum / this.generationDurations.length);
+  }
+
+  public getRecommendedModel(): LocalLlmModelType {
+    const avg = this.getAverageGenerationDuration();
+    if (avg > 3000 || this.lastGenerationDurationMs > 3500) {
+      return 'light';
+    }
+    return 'standard';
   }
 
   public getHardwareInfo(): SystemHardwareInfo {
@@ -147,6 +170,7 @@ export class LlmManager {
 
     const mb = Math.round(modelSizeBytes / (1024 * 1024));
     const sizeFormatted = mb > 1000 ? `${(mb / 1024).toFixed(2)} Go` : `${mb} Mo`;
+    const avg = this.getAverageGenerationDuration();
 
     return {
       isEnabled: isInstalled,
@@ -158,6 +182,9 @@ export class LlmManager {
       isGenerating: this.isGenerating,
       modelSizeBytes,
       modelSizeFormatted: isInstalled ? sizeFormatted : meta.sizeFormatted,
+      lastGenerationDurationMs: this.lastGenerationDurationMs,
+      averageGenerationDurationMs: avg,
+      recommendedModel: this.getRecommendedModel(),
     };
   }
 
@@ -174,6 +201,34 @@ export class LlmManager {
     this.worker = new Worker(workerPath);
 
     this.worker.on('message', (msg: any) => {
+      // 1. Relais des événements de statut en direct vers toutes les fenêtres
+      if (msg.type === 'status_update') {
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('llm:statusUpdate', {
+              state: msg.state,
+              message: msg.message,
+            });
+          }
+        }
+        return;
+      }
+
+      // 2. Relais des tokens générés en temps réel (streaming)
+      if (msg.type === 'token_chunk') {
+        const windows = BrowserWindow.getAllWindows();
+        for (const win of windows) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('llm:tokenChunk', {
+              chunk: msg.chunk,
+              fullText: msg.fullText,
+            });
+          }
+        }
+        return;
+      }
+
       const req = this.workerRequests.get(msg.id);
       if (!req) return;
 
@@ -229,6 +284,63 @@ export class LlmManager {
       console.log('[LlmManager] Modèle LLM déchargé de la mémoire (RAM libérée).');
     } catch (err) {
       console.warn('[LlmManager] Erreur lors du déchargement du modèle:', err);
+    }
+  }
+
+  // --- Préchauffage du modèle en arrière-plan ---
+  public async preloadModel(modelType: LocalLlmModelType = 'standard'): Promise<boolean> {
+    if (!this.isModelInstalled(modelType)) {
+      return false;
+    }
+    if (this.isLoaded && this.currentLoadedModelType === modelType) {
+      this.resetIdleTimeout();
+      return true;
+    }
+
+    try {
+      console.log(`[LlmManager] Préchauffage du modèle local ${modelType}...`);
+      const worker = await this.getWorker();
+      const modelPath = this.getModelPath(modelType);
+      const id = crypto.randomUUID();
+
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('llm:statusUpdate', {
+            state: 'loading_model',
+            modelType,
+            message: 'Préchauffage du modèle en arrière-plan...',
+          });
+        }
+      }
+
+      const res = await new Promise<any>((resolve, reject) => {
+        this.workerRequests.set(id, { resolve, reject });
+        worker.postMessage({
+          type: 'preload',
+          id,
+          modelPath,
+        });
+      });
+
+      this.isLoaded = true;
+      this.currentLoadedModelType = modelType;
+      this.resetIdleTimeout();
+
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('llm:statusUpdate', {
+            state: 'idle',
+            modelType,
+          });
+        }
+      }
+
+      console.log(`[LlmManager] Modèle ${modelType} préchauffé avec succès (${res?.loadDurationMs || 0} ms).`);
+      return true;
+    } catch (err) {
+      console.warn(`[LlmManager] Erreur préchauffage modèle ${modelType}:`, err);
+      return false;
     }
   }
 
@@ -321,21 +433,14 @@ export class LlmManager {
         receivedBytes += value.length;
 
         const now = Date.now();
-        if (now - lastReportTime >= 250) {
+        if (now - lastReportTime >= 500) {
           const deltaBytes = receivedBytes - lastReportBytes;
-          const deltaTimeSec = (now - lastReportTime) / 1000;
-          const bytesPerSec = deltaBytes / Math.max(deltaTimeSec, 0.001);
+          const deltaTime = (now - lastReportTime) / 1000;
+          const bytesPerSec = deltaBytes / deltaTime;
+          const mbPerSec = bytesPerSec / (1024 * 1024);
+          speedFormatted = `${mbPerSec.toFixed(1)} Mo/s`;
 
-          if (bytesPerSec > 1024 * 1024) {
-            speedFormatted = `${(bytesPerSec / (1024 * 1024)).toFixed(1)} Mo/s`;
-          } else {
-            speedFormatted = `${Math.round(bytesPerSec / 1024)} Ko/s`;
-          }
-
-          const progress = Math.min(
-            100,
-            Math.round((receivedBytes / Math.max(totalBytes, 1)) * 100)
-          );
+          const progress = Math.round((receivedBytes / totalBytes) * 100);
           notifyProgress({
             progress,
             loadedBytes: receivedBytes,
@@ -348,20 +453,9 @@ export class LlmManager {
         }
       }
 
-      await new Promise<void>((resolve, reject) => {
-        fileStream.end(() => resolve());
-        fileStream.on('error', reject);
-      });
+      fileStream.end();
 
-      // Vérification finale de taille
-      const finalStat = fs.statSync(tempPath);
-      if (finalStat.size < meta.expectedSize * 0.95) {
-        throw new Error(
-          `Fichier incomplet (${finalStat.size} octets reçus sur ${meta.expectedSize} attendus)`
-        );
-      }
-
-      // Renommage atomique
+      // Renommer le fichier temporaire en fichier final
       if (fs.existsSync(targetPath)) {
         fs.unlinkSync(targetPath);
       }
@@ -461,7 +555,15 @@ export class LlmManager {
     definition?: string;
     partOfSpeech?: string;
     modelType?: LocalLlmModelType;
-  }): Promise<{ success: boolean; sentence?: string; error?: string }> {
+  }): Promise<{
+    success: boolean;
+    sentence?: string;
+    error?: string;
+    durationMs?: number;
+    loadDurationMs?: number;
+    generationDurationMs?: number;
+    tokensPerSec?: number;
+  }> {
     const modelType = params.modelType || 'standard';
     if (!this.isModelInstalled(modelType)) {
       return { success: false, error: 'Modèle LLM non installé' };
@@ -474,8 +576,25 @@ export class LlmManager {
     this.isGenerating = true;
     setHeavyTaskActive(true);
 
+    // Timeouts séparés : 90 s allouées au chargement disque vers RAM si démarrage à froid, 25 s pour la génération
+    const isModelWarm = this.isLoaded && this.currentLoadedModelType === modelType;
+    const timeoutMs = isModelWarm ? 25000 : 115000;
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        reject(
+          new Error(
+            isModelWarm
+              ? 'Délai maximal de génération dépassé (25s)'
+              : 'Délai maximal de chargement du modèle dépassé (90s)'
+          )
+        );
+      }, timeoutMs);
+    });
+
     try {
-      const response = await new Promise<any>((resolve, reject) => {
+      const genPromise = new Promise<any>((resolve, reject) => {
         this.workerRequests.set(id, { resolve, reject });
         worker.postMessage({
           type: 'generate',
@@ -485,19 +604,57 @@ export class LlmManager {
           french: params.french,
           definition: params.definition,
           partOfSpeech: params.partOfSpeech,
-          maxAttempts: 3,
+          maxAttempts: 2,
         });
       });
+
+      const response = await Promise.race([genPromise, timeoutPromise]);
+      if (timer) clearTimeout(timer);
 
       this.isLoaded = true;
       this.currentLoadedModelType = modelType;
       this.resetIdleTimeout();
 
+      if (response.generationDurationMs) {
+        this.lastGenerationDurationMs = response.generationDurationMs;
+        this.generationDurations.push(response.generationDurationMs);
+        if (this.generationDurations.length > 20) {
+          this.generationDurations.shift();
+        }
+      }
+
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('llm:statusUpdate', {
+            state: 'idle',
+            modelType,
+          });
+        }
+      }
+
       if (response.success && response.sentence) {
-        return { success: true, sentence: response.sentence };
+        return {
+          success: true,
+          sentence: response.sentence,
+          durationMs: response.durationMs,
+          loadDurationMs: response.loadDurationMs,
+          generationDurationMs: response.generationDurationMs,
+          tokensPerSec: response.tokensPerSec,
+        };
       }
       return { success: false, error: response.error || 'Qualité non conforme' };
     } catch (err: any) {
+      if (timer) clearTimeout(timer);
+      const windows = BrowserWindow.getAllWindows();
+      for (const win of windows) {
+        if (!win.isDestroyed()) {
+          win.webContents.send('llm:statusUpdate', {
+            state: 'idle',
+            modelType,
+          });
+        }
+      }
       return { success: false, error: err.message };
     } finally {
       this.isGenerating = false;
@@ -505,21 +662,43 @@ export class LlmManager {
     }
   }
 
-  // --- Recherche dans le dictionnaire en ligne (dictionaryapi.dev) ---
+  // --- Recherche dans le dictionnaire en ligne avec repli intelligent sur les pluriels ---
   public async fetchDictionaryExample(
     englishWord: string,
     skipSentence?: string
   ): Promise<{ sentence?: string; allExamples?: string[]; definition?: string; partOfSpeech?: string } | null> {
+    const tryQuery = async (word: string): Promise<{ data: any[]; clean: string } | null> => {
+      try {
+        const clean = word.trim().toLowerCase();
+        const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(3500) });
+        if (!res.ok) return null;
+        const data = await res.json();
+        if (!Array.isArray(data) || data.length === 0) return null;
+        return { data, clean };
+      } catch {
+        return null;
+      }
+    };
+
+    const clean = englishWord.trim().toLowerCase();
+    let queryRes = await tryQuery(clean);
+
+    // Repli intelligent : si 404 et mot au pluriel (se termine par 's'), tenter la forme de base (ex: flaps -> flap, runways -> runway)
+    if (!queryRes && clean.endsWith('s') && !clean.endsWith('ss')) {
+      if (clean.endsWith('ies') && clean.length > 4) {
+        queryRes = await tryQuery(clean.slice(0, -3) + 'y');
+      } else if (clean.endsWith('es') && clean.length > 3) {
+        queryRes = (await tryQuery(clean.slice(0, -2))) || (await tryQuery(clean.slice(0, -1)));
+      } else if (clean.length > 2) {
+        queryRes = await tryQuery(clean.slice(0, -1));
+      }
+    }
+
+    if (!queryRes) return null;
+    const { data } = queryRes;
+
     try {
-      const clean = englishWord.trim().toLowerCase();
-      // Uniquement pour les mots uniques ou expressions simples
-      const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(clean)}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(4000) });
-
-      if (!res.ok) return null;
-      const data = await res.json();
-      if (!Array.isArray(data) || data.length === 0) return null;
-
       const foundExamples: string[] = [];
       let foundDefinition: string | undefined;
       let foundPartOfSpeech: string | undefined;
@@ -546,7 +725,6 @@ export class LlmManager {
         }
       }
 
-      // Si un skipSentence est fourni (ex: bouton "Autre phrase"), choisir une phrase différente
       let chosenSentence: string | undefined = undefined;
       if (foundExamples.length > 0) {
         const different = skipSentence
@@ -593,10 +771,10 @@ export class LlmManager {
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          max_tokens: 45,
           temperature: 0.3,
+          max_tokens: 40,
         }),
-        signal: AbortSignal.timeout(6000),
+        signal: AbortSignal.timeout(12000),
       });
 
       if (!res.ok) {
@@ -616,7 +794,7 @@ export class LlmManager {
     }
   }
 
-  // --- Exécution de la cascade complète ---
+  // --- Exécution de la cascade complète avec priorité absolue et repli intelligent ---
   public async resolveSentenceCascade(params: {
     english: string;
     french: string;
@@ -628,8 +806,21 @@ export class LlmManager {
     aiApiKey?: string;
     aiApiEndpoint?: string;
     skipSentence?: string;
-  }): Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null> {
-    console.log(`[LlmManager] Début résolution cascade pour "${params.english}" (fr: "${params.french}")`);
+    priority?: 'normal' | 'immediate';
+  }): Promise<{
+    sentence?: string;
+    source?: ExampleSourceType;
+    error?: string;
+    durationMs?: number;
+    isSlow?: boolean;
+    recommendedModel?: LocalLlmModelType;
+    backgroundIaSentence?: string;
+  } | null> {
+    console.log(
+      `[LlmManager] Début résolution cascade pour "${params.english}" (fr: "${params.french}", priorite: ${
+        params.priority || 'normal'
+      })`
+    );
 
     // Règle 1 : Phrase écrite ou modifiée par l'utilisateur => JAMAIS écrasée (sauf si skipSentence explicitement demandé)
     if (params.existingExample && params.existingSource === 'user' && !params.skipSentence) {
@@ -637,113 +828,194 @@ export class LlmManager {
       return { sentence: params.existingExample, source: 'user' };
     }
 
-    const order: ExampleSourceType[] = params.cascadeOrder || [
-      'user',
-      'dictionary',
-      'local_llm',
-      'api',
-    ];
-
-    let dictContext: {
-      sentence?: string;
-      allExamples?: string[];
-      definition?: string;
-      partOfSpeech?: string;
-    } | null = null;
+    const isImmediate = params.priority === 'immediate';
+    const queue = getSentenceQueue();
+    if (isImmediate) {
+      queue.pauseForImmediateRequest();
+    }
 
     try {
-      dictContext = await this.fetchDictionaryExample(params.english, params.skipSentence);
-    } catch (err) {
-      console.warn(`[LlmManager] Erreur interrogation dictionnaire pour "${params.english}":`, err);
-    }
+      const order: ExampleSourceType[] = params.cascadeOrder || [
+        'user',
+        'dictionary',
+        'local_llm',
+        'api',
+      ];
 
-    const failureReasons: string[] = [];
+      const modelType = params.localLlmModel || 'standard';
+      const isLocalInstalled = this.isModelInstalled(modelType);
+      const shouldRunParallel = isImmediate && params.localLlmEnabled && isLocalInstalled;
 
-    for (const source of order) {
-      if (source === 'user') {
-        if (params.existingExample && params.existingSource === 'user' && !params.skipSentence) {
-          return { sentence: params.existingExample, source: 'user' };
-        }
-      } else if (source === 'dictionary') {
-        console.log(`[LlmManager] [Étape 1] Test source Dictionnaire pour "${params.english}"...`);
-        if (dictContext && dictContext.sentence) {
-          const qc = validateSentenceQuality(dictContext.sentence, params.english);
+      // Recherche dictionnaire lancée immédiatement
+      const dictPromise = this.fetchDictionaryExample(params.english, params.skipSentence);
+
+      // Si mode immédiat et modèle local activé : parallélisation dictionnaire et modèle local
+      if (shouldRunParallel) {
+        console.log(`[LlmManager] Mode instantané parallèle activé pour "${params.english}"`);
+
+        // Test ultra-rapide (< 450ms) du dictionnaire
+        const quickDict = await Promise.race([
+          dictPromise,
+          new Promise<null>((r) => setTimeout(() => r(null), 450)),
+        ]);
+
+        if (quickDict && quickDict.sentence) {
+          const qc = validateSentenceQuality(quickDict.sentence, params.english);
           if (qc.isValid && qc.cleanSentence) {
-            console.log(`[LlmManager] Succès Dictionnaire pour "${params.english}": « ${qc.cleanSentence} »`);
-            return { sentence: qc.cleanSentence, source: 'dictionary' };
-          } else {
-            failureReasons.push('Exemple dictionnaire rejeté par le contrôle qualité');
-          }
-        } else {
-          console.log(`[LlmManager] Dictionnaire : aucun exemple d’usage pour "${params.english}".`);
-          failureReasons.push('Aucun exemple dans le dictionnaire en ligne');
-        }
-      } else if (source === 'local_llm') {
-        console.log(`[LlmManager] [Étape 2] Test source Modèle local pour "${params.english}"...`);
-        if (params.localLlmEnabled) {
-          const modelType = params.localLlmModel || 'standard';
-          if (this.isModelInstalled(modelType)) {
-            console.log(`[LlmManager] Modèle local ${modelType} prêt. Lancement de la génération...`);
-            const llmRes = await this.generateSentenceWithLocalLlm({
+            console.log(
+              `[LlmManager] Succès Dictionnaire ultra-rapide pour "${params.english}": « ${qc.cleanSentence} »`
+            );
+
+            // Continuer la génération locale en tâche de fond pour proposer le remplacement si meilleure phrase IA
+            this.generateSentenceWithLocalLlm({
               english: params.english,
               french: params.french,
-              definition: dictContext?.definition,
-              partOfSpeech: dictContext?.partOfSpeech,
+              definition: quickDict.definition,
+              partOfSpeech: quickDict.partOfSpeech,
               modelType,
-            });
+            })
+              .then((bgRes) => {
+                if (bgRes.success && bgRes.sentence) {
+                  console.log(
+                    `[LlmManager] Phrase IA en arrière-plan prête pour "${params.english}" : « ${bgRes.sentence} »`
+                  );
+                  const windows = BrowserWindow.getAllWindows();
+                  for (const win of windows) {
+                    if (!win.isDestroyed()) {
+                      win.webContents.send('llm:backgroundSentenceReady', {
+                        english: params.english,
+                        sentence: bgRes.sentence,
+                        source: 'local_llm',
+                      });
+                    }
+                  }
+                }
+              })
+              .catch(() => {});
 
-            if (llmRes.success && llmRes.sentence) {
-              console.log(`[LlmManager] Succès Modèle local pour "${params.english}": « ${llmRes.sentence} »`);
-              return { sentence: llmRes.sentence, source: 'local_llm' };
-            } else {
-              console.warn(`[LlmManager] Échec génération locale pour "${params.english}":`, llmRes.error);
-              failureReasons.push(`Modèle local: ${llmRes.error || 'non conforme'}`);
-            }
-          } else {
-            console.log(`[LlmManager] Modèle local activé mais fichier non installé (${modelType}).`);
-            failureReasons.push('Modèle local non installé');
+            return {
+              sentence: qc.cleanSentence,
+              source: 'dictionary',
+            };
           }
-        } else {
-          console.log(`[LlmManager] Modèle local désactivé dans les paramètres.`);
-          failureReasons.push('Modèle local désactivé');
-        }
-      } else if (source === 'api') {
-        console.log(`[LlmManager] [Étape 3] Test source Clé API pour "${params.english}"...`);
-        if (params.aiApiKey && params.aiApiKey.trim().length > 0) {
-          const apiRes = await this.generateSentenceWithApi({
-            english: params.english,
-            french: params.french,
-            apiKey: params.aiApiKey,
-            apiEndpoint: params.aiApiEndpoint,
-          });
-
-          if (apiRes.success && apiRes.sentence) {
-            console.log(`[LlmManager] Succès Clé API pour "${params.english}": « ${apiRes.sentence} »`);
-            return { sentence: apiRes.sentence, source: 'api' };
-          } else {
-            console.warn(`[LlmManager] Échec API pour "${params.english}":`, apiRes.error);
-            failureReasons.push(`API: ${apiRes.error || 'erreur'}`);
-          }
-        } else {
-          console.log(`[LlmManager] Clé API non configurée.`);
-          failureReasons.push('Clé API non configurée');
         }
       }
+
+      // Évaluation séquentielle de la cascade
+      const dictContext = await dictPromise.catch(() => null);
+      const failureReasons: string[] = [];
+
+      for (const source of order) {
+        if (source === 'user') {
+          if (params.existingExample && params.existingSource === 'user' && !params.skipSentence) {
+            return { sentence: params.existingExample, source: 'user' };
+          }
+        } else if (source === 'dictionary') {
+          console.log(`[LlmManager] [Étape 1] Test source Dictionnaire pour "${params.english}"...`);
+          if (dictContext && dictContext.sentence) {
+            const qc = validateSentenceQuality(dictContext.sentence, params.english);
+            if (qc.isValid && qc.cleanSentence) {
+              console.log(`[LlmManager] Succès Dictionnaire pour "${params.english}": « ${qc.cleanSentence} »`);
+              return { sentence: qc.cleanSentence, source: 'dictionary' };
+            } else {
+              failureReasons.push('Exemple dictionnaire rejeté par le contrôle qualité');
+            }
+          } else {
+            console.log(`[LlmManager] Dictionnaire : aucun exemple d’usage pour "${params.english}".`);
+            failureReasons.push('Aucun exemple dans le dictionnaire en ligne');
+          }
+        } else if (source === 'local_llm') {
+          console.log(`[LlmManager] [Étape 2] Test source Modèle local pour "${params.english}"...`);
+          if (params.localLlmEnabled) {
+            if (isLocalInstalled) {
+              console.log(`[LlmManager] Modèle local ${modelType} prêt. Lancement de la génération...`);
+              const llmRes = await this.generateSentenceWithLocalLlm({
+                english: params.english,
+                french: params.french,
+                definition: dictContext?.definition,
+                partOfSpeech: dictContext?.partOfSpeech,
+                modelType,
+              });
+
+              if (llmRes.success && llmRes.sentence) {
+                console.log(`[LlmManager] Succès Modèle local pour "${params.english}": « ${llmRes.sentence} »`);
+                const isSlow = (llmRes.generationDurationMs || 0) > 3500;
+                return {
+                  sentence: llmRes.sentence,
+                  source: 'local_llm',
+                  durationMs: llmRes.durationMs,
+                  isSlow,
+                  recommendedModel: this.getRecommendedModel(),
+                };
+              } else {
+                console.warn(`[LlmManager] Échec génération locale pour "${params.english}":`, llmRes.error);
+                failureReasons.push(`Modèle local: ${llmRes.error || 'non conforme'}`);
+
+                // Repli intelligent : si le modèle local échoue mais que le dictionnaire avait un exemple
+                if (dictContext && dictContext.sentence) {
+                  const qc = validateSentenceQuality(dictContext.sentence, params.english);
+                  if (qc.isValid && qc.cleanSentence) {
+                    console.log(
+                      `[LlmManager] Repli intelligent réussi sur le dictionnaire pour "${params.english}": « ${qc.cleanSentence} »`
+                    );
+                    return { sentence: qc.cleanSentence, source: 'dictionary' };
+                  }
+                }
+              }
+            } else {
+              console.log(`[LlmManager] Modèle local activé mais fichier non installé (${modelType}).`);
+              failureReasons.push('Modèle local non installé');
+            }
+          } else {
+            console.log(`[LlmManager] Modèle local désactivé dans les paramètres.`);
+            failureReasons.push('Modèle local désactivé');
+          }
+        } else if (source === 'api') {
+          console.log(`[LlmManager] [Étape 3] Test source Clé API pour "${params.english}"...`);
+          if (params.aiApiKey && params.aiApiKey.trim().length > 0) {
+            const apiRes = await this.generateSentenceWithApi({
+              english: params.english,
+              french: params.french,
+              apiKey: params.aiApiKey,
+              apiEndpoint: params.aiApiEndpoint,
+            });
+
+            if (apiRes.success && apiRes.sentence) {
+              console.log(`[LlmManager] Succès Clé API pour "${params.english}": « ${apiRes.sentence} »`);
+              return { sentence: apiRes.sentence, source: 'api' };
+            } else {
+              console.warn(`[LlmManager] Échec API pour "${params.english}":`, apiRes.error);
+              failureReasons.push(`API: ${apiRes.error || 'erreur'}`);
+            }
+          } else {
+            console.log(`[LlmManager] Clé API non configurée.`);
+            failureReasons.push('Clé API non configurée');
+          }
+        }
+      }
+
+      // Aucune source n'a pu fournir de phrase valide
+      let detailedError = 'Aucun résultat trouvé dans la cascade';
+      const hasApiKey = Boolean(params.aiApiKey && params.aiApiKey.trim().length > 0);
+
+      if (!isLocalInstalled && !hasApiKey) {
+        detailedError = 'Aucun exemple dans le dictionnaire • Modèle local non installé • Clé API non configurée';
+      } else if (failureReasons.length > 0) {
+        detailedError = failureReasons.join(' | ');
+      }
+
+      console.warn(`[LlmManager] Fin cascade pour "${params.english}" : ${detailedError}`);
+      return {
+        sentence: undefined,
+        source: undefined,
+        error: detailedError,
+        recommendedModel: this.getRecommendedModel(),
+      };
+    } finally {
+      if (isImmediate) {
+        queue.resumeAfterImmediateRequest();
+      }
     }
-
-    // Aucune source n'a pu fournir de phrase valide
-    let detailedError = 'Aucun résultat trouvé dans la cascade';
-    const isLocalInstalled = this.isModelInstalled(params.localLlmModel || 'standard');
-    const hasApiKey = !!(params.aiApiKey && params.aiApiKey.trim().length > 0);
-
-    if (!isLocalInstalled && !hasApiKey) {
-      detailedError = 'Aucun exemple dans le dictionnaire • Modèle local non installé • Clé API non configurée';
-    } else if (failureReasons.length > 0) {
-      detailedError = failureReasons.join(' | ');
-    }
-
-    console.warn(`[LlmManager] Fin cascade pour "${params.english}" : ${detailedError}`);
-    return { sentence: undefined, source: undefined, error: detailedError };
   }
 }
 

@@ -28,6 +28,43 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
 
   const frenchInputRef = useRef<HTMLInputElement>(null);
   const isCancelledRef = useRef<boolean>(false);
+  const [llmState, setLlmState] = useState<'idle' | 'loading_model' | 'generating'>('idle');
+  const [backgroundOffer, setBackgroundOffer] = useState<{ sentence: string; source: ExampleSourceType } | null>(null);
+
+  // Préchauffage du modèle local dès l'ouverture du modal si activé
+  useEffect(() => {
+    if (isOpen && db?.settings?.localLlmEnabled && window.api?.preloadLlmModel) {
+      window.api.preloadLlmModel(db.settings.localLlmModel || 'standard').catch(() => {});
+    }
+  }, [isOpen, db?.settings?.localLlmEnabled, db?.settings?.localLlmModel]);
+
+  // Écouteurs d'événements LLM en direct (statut de chargement, streaming, offre de phrase IA)
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const unsubStatus = window.api?.onLlmStatusUpdate?.((data) => {
+      setLlmState(data.state);
+    });
+
+    const unsubToken = window.api?.onLlmTokenChunk?.((data) => {
+      if (isGeneratingExample && data.fullText) {
+        setExample(data.fullText);
+        setExampleSource('local_llm');
+      }
+    });
+
+    const unsubBgReady = window.api?.onBackgroundSentenceReady?.((data) => {
+      if (data.english.trim().toLowerCase() === english.trim().toLowerCase()) {
+        setBackgroundOffer({ sentence: data.sentence, source: data.source });
+      }
+    });
+
+    return () => {
+      unsubStatus?.();
+      unsubToken?.();
+      unsubBgReady?.();
+    };
+  }, [isOpen, isGeneratingExample, english]);
 
   // Focus automatique à l'ouverture
   useEffect(() => {
@@ -38,6 +75,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
       setDuplicateWarning(null);
       setSuccessToast(null);
       setGenerationError(null);
+      setBackgroundOffer(null);
     }
   }, [isOpen]);
 
@@ -60,16 +98,17 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     setDuplicateWarning(found || null);
   }, [french, english, db]);
 
-  // Générer une phrase d'exemple en direct avec l'IA (Prioritaire / immédiat)
+  // Générer une phrase d'exemple en direct avec priorité absolue et timeouts séparés
   const handleGenerateExample = async (skipCurrent: boolean = false) => {
     if (!english.trim() || isGeneratingExample) return;
     setIsGeneratingExample(true);
     setGenerationError(null);
+    setBackgroundOffer(null);
     isCancelledRef.current = false;
 
-    // Timeout de 15 secondes max
+    // Timeout de sécurité global généreux (80s max pour le premier chargement disque)
     const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
-      (_, reject) => setTimeout(() => reject(new Error('Délai maximal de génération dépassé (15s)')), 15000)
+      (_, reject) => setTimeout(() => reject(new Error('Délai maximal dépassé')), 80000)
     );
 
     try {
@@ -84,6 +123,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           localLlmModel: db?.settings.localLlmModel,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
+          priority: 'immediate',
         });
 
         const res = await Promise.race([generationPromise, timeoutPromise]);
@@ -104,12 +144,14 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
       }
     } finally {
       setIsGeneratingExample(false);
+      setLlmState('idle');
     }
   };
 
   const handleCancelGenerate = () => {
     isCancelledRef.current = true;
     setIsGeneratingExample(false);
+    setLlmState('idle');
   };
 
   // Écouter la phrase d'exemple avec Kokoro
@@ -430,7 +472,12 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                   {isGeneratingExample ? (
                     <>
                       <RotateCw size={13} className="animate-spin" />
-                      <span>Génération...</span>
+                      <span>
+                        {llmState === 'loading_model' ? 'Chargement du modèle…' : 'Génération…'}
+                      </span>
+                      {llmState === 'loading_model' && (
+                        <span style={{ fontSize: '0.68rem', opacity: 0.8 }}>(1ère fois)</span>
+                      )}
                     </>
                   ) : (
                     <>
@@ -496,11 +543,73 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                   setExample(e.target.value);
                   setExampleSource(undefined); // Le badge disparaît dès que l'utilisateur modifie
                   setGenerationError(null);
+                  setBackgroundOffer(null);
                 }}
                 placeholder="Ex : An apple a day keeps the doctor away. (ou cliquez sur ✨ Générer une phrase)"
                 style={{ width: '100%' }}
               />
             </div>
+
+            {/* Proposition de remplacement par la phrase IA arrivée en tâche de fond */}
+            {backgroundOffer && (
+              <div
+                style={{
+                  marginTop: '6px',
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'rgba(99, 102, 241, 0.12)',
+                  border: '1px solid rgba(99, 102, 241, 0.35)',
+                  fontSize: '0.78rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-primary)' }}>
+                  <Sparkles size={14} style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
+                  <span>
+                    Une phrase IA est prête : <em>« {backgroundOffer.sentence} »</em>
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExample(backgroundOffer.sentence);
+                      setExampleSource('local_llm');
+                      setBackgroundOffer(null);
+                    }}
+                    style={{
+                      background: 'var(--color-primary)',
+                      color: '#fff',
+                      border: 'none',
+                      padding: '3px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.74rem',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Remplacer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBackgroundOffer(null)}
+                    style={{
+                      background: 'transparent',
+                      color: 'var(--text-muted)',
+                      border: 'none',
+                      padding: '3px 6px',
+                      fontSize: '0.74rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Ignorer
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Message d'erreur lisible avec lien Centre IA */}
             {generationError && (

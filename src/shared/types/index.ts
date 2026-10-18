@@ -175,7 +175,19 @@ export interface LocalLlmStatus {
   modelSizeFormatted: string;
   ramUsageMB?: number;
   lastLoadedAt?: string;
+  lastGenerationDurationMs?: number;
+  averageGenerationDurationMs?: number;
+  recommendedModel?: LocalLlmModelType;
   error?: string;
+}
+
+export type LlmState = 'idle' | 'loading_model' | 'generating';
+
+export interface LlmStatusEvent {
+  state: LlmState;
+  modelType?: LocalLlmModelType;
+  english?: string;
+  message?: string;
 }
 
 export interface SystemHardwareInfo {
