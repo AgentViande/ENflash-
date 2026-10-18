@@ -36,9 +36,13 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   exampleCascadeOrder: ['user', 'dictionary', 'local_llm', 'api'],
   localLlmEnabled: false,
   localLlmModel: 'standard',
+  aiApiProvider: 'gemini',
   aiApiKey: '',
-  aiApiEndpoint: 'https://api.openai.com/v1',
+  aiApiEndpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/',
+  aiApiModel: 'gemini-1.5-flash',
 };
+
+export * from './aiProviders';
 
 /**
  * Définition de tous les badges du jeu

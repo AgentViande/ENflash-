@@ -160,6 +160,7 @@ export interface PiperVoiceModel {
 
 export type ExampleSourceType = 'user' | 'dictionary' | 'local_llm' | 'api';
 export type LocalLlmModelType = 'standard' | 'light';
+export type AiApiProvider = 'gemini' | 'openai' | 'groq' | 'mistral' | 'openrouter' | 'custom';
 
 export interface LocalLlmStatus {
   isEnabled: boolean;
@@ -268,12 +269,15 @@ export interface AppSettings {
   autoCheckUpdates: boolean;
   lastSeenVersion: string;
 
-  // Phrases d'exemple & IA locale
+  // Phrases d'exemple & IA (locale & externe)
   exampleCascadeOrder?: ExampleSourceType[];
   localLlmEnabled?: boolean;
   localLlmModel?: LocalLlmModelType;
+  aiApiProvider?: AiApiProvider;
   aiApiKey?: string;
+  aiApiKeys?: Partial<Record<AiApiProvider, string>>;
   aiApiEndpoint?: string;
+  aiApiModel?: string;
   sentenceRequestsPerMinute?: number;
 }
 

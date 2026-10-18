@@ -10,7 +10,14 @@ import {
   SystemHardwareInfo,
   SpeedTestResult,
   ExampleSourceType,
+  AiApiProvider,
 } from '../../shared/types';
+import {
+  AI_PROVIDERS,
+  getEffectiveEndpoint,
+  formatApiError,
+  detectProviderFromKey,
+} from '../../shared/constants/aiProviders';
 import { validateSentenceQuality } from './qualityControl';
 import { getSentenceQueue } from './sentenceQueue';
 
@@ -74,7 +81,8 @@ export class LlmManager {
   private generationDurations: number[] = [];
 
   private constructor() {
-    this.modelsDir = path.join(app.getPath('userData'), 'models', 'llm');
+    const userDataDir = typeof app?.getPath === 'function' ? app.getPath('userData') : path.join(os.tmpdir(), 'enflash');
+    this.modelsDir = path.join(userDataDir, 'models', 'llm');
     this.ensureDirs();
   }
 
@@ -744,29 +752,184 @@ export class LlmManager {
     }
   }
 
-  // --- Génération par API distante facultative (Qualité+ / OpenAI / Groq) ---
+  /**
+   * Validation légère de la clé API via l'endpoint /models du fournisseur
+   */
+  public async testAiApiKey(params: {
+    provider?: AiApiProvider;
+    apiKey: string;
+    apiEndpoint?: string;
+  }): Promise<{ success: boolean; models?: string[]; error?: string; message?: string }> {
+    const cleanKey = (params.apiKey || '').trim();
+    if (!cleanKey) {
+      return { success: false, error: 'Veuillez renseigner une clé API.' };
+    }
+
+    const provider = params.provider;
+    if (!provider) {
+      return { success: false, error: 'Veuillez sélectionner un fournisseur d’API (Google Gemini, OpenAI, Groq, etc.).' };
+    }
+
+    const endpoint = getEffectiveEndpoint(provider, params.apiEndpoint);
+    if (!endpoint) {
+      return {
+        success: false,
+        error: 'Veuillez renseigner l’adresse (endpoint) de votre API personnalisée.',
+      };
+    }
+
+    // Détecteurs de cohérence de clé (Google Gemini vs OpenAI)
+    if ((provider === 'openai' || endpoint.includes('openai.com')) && cleanKey.startsWith('AIza')) {
+      return {
+        success: false,
+        error: 'Cette clé ressemble à une clé Google Gemini : choisis le fournisseur Google Gemini.',
+      };
+    }
+    if (provider === 'gemini' && (cleanKey.startsWith('sk-') || cleanKey.startsWith('gsk_'))) {
+      return {
+        success: false,
+        error: 'Cette clé ressemble à une clé OpenAI ou Groq : choisis le fournisseur correspondant dans la liste.',
+      };
+    }
+
+    try {
+      const url = `${endpoint.replace(/\/+$/, '')}/models`;
+      console.log(`[LlmManager] Test de clé API auprès de : ${url} (fournisseur: ${provider})`);
+
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${cleanKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+
+      if (!res.ok) {
+        const errorBody = await res.json().catch(() => null);
+        const formattedErr = formatApiError(res.status, errorBody, provider, cleanKey, endpoint);
+        return { success: false, error: formattedErr };
+      }
+
+      const json = await res.json().catch(() => null);
+      let rawModels: string[] = [];
+
+      if (json && Array.isArray(json.data)) {
+        rawModels = json.data
+          .map((item: any) => (typeof item === 'string' ? item : item?.id))
+          .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+      } else if (json && Array.isArray(json.models)) {
+        rawModels = json.models
+          .map((item: any) => (typeof item === 'string' ? item : item?.id || item?.name))
+          .filter((id: any): id is string => typeof id === 'string' && id.length > 0);
+      }
+
+      // Nettoyer et filtrer les modèles adaptés au texte
+      const filteredModels = rawModels.filter((id) => {
+        const lower = id.toLowerCase();
+        return (
+          !lower.includes('embedding') &&
+          !lower.includes('whisper') &&
+          !lower.includes('dall-e') &&
+          !lower.includes('tts') &&
+          !lower.includes('moderation') &&
+          !lower.includes('imagen')
+        );
+      });
+
+      const recommended = AI_PROVIDERS[provider]?.recommendedModels || [];
+      const sortedModels = [
+        ...recommended.filter((m) => filteredModels.includes(m)),
+        ...filteredModels.filter((m) => !recommended.includes(m)),
+      ];
+
+      return {
+        success: true,
+        models: sortedModels.length > 0 ? sortedModels : recommended,
+        message: `Clé valide ✅ (${sortedModels.length || recommended.length} modèle(s) disponible(s))`,
+      };
+    } catch (err: any) {
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        return { success: false, error: 'Délai d’attente dépassé (timeout) : le service distant n’a pas répondu.' };
+      }
+      if (
+        err.message?.includes('fetch failed') ||
+        err.message?.includes('ENOTFOUND') ||
+        err.message?.includes('ECONNREFUSED')
+      ) {
+        return {
+          success: false,
+          error: 'Impossible de joindre le service : vérifie ta connexion ou ton pare-feu.',
+        };
+      }
+      return { success: false, error: `Erreur de connexion : ${err.message}` };
+    }
+  }
+
+  /**
+   * Test complet avec génération réelle d'une phrase d'exemple courte
+   */
+  public async testAiGeneration(params: {
+    provider?: AiApiProvider;
+    apiKey: string;
+    apiEndpoint?: string;
+    model?: string;
+  }): Promise<{ success: boolean; sentence?: string; durationMs?: number; error?: string }> {
+    const start = Date.now();
+    const res = await this.generateSentenceWithApi({
+      english: 'sky',
+      french: 'ciel',
+      apiKey: params.apiKey,
+      apiEndpoint: params.apiEndpoint,
+      provider: params.provider,
+      model: params.model,
+    });
+    const durationMs = Date.now() - start;
+
+    if (res.success && res.sentence) {
+      return { success: true, sentence: res.sentence, durationMs };
+    }
+    return { success: false, error: res.error, durationMs };
+  }
+
+  // --- Génération par API distante facultative (Qualité+ / Gemini / OpenAI / Groq) ---
   public async generateSentenceWithApi(params: {
     english: string;
     french: string;
     apiKey: string;
     apiEndpoint?: string;
+    provider?: AiApiProvider;
+    model?: string;
   }): Promise<{ success: boolean; sentence?: string; error?: string }> {
+    const cleanKey = (params.apiKey || '').trim();
+    if (!cleanKey) {
+      return { success: false, error: 'Clé API non renseignée' };
+    }
+
+    const provider = params.provider || detectProviderFromKey(cleanKey) || 'gemini';
+    const endpoint = getEffectiveEndpoint(provider, params.apiEndpoint);
+    if (!endpoint) {
+      return { success: false, error: 'Endpoint d’API non configuré' };
+    }
+
+    const targetUrl = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
+    const model = params.model || AI_PROVIDERS[provider]?.defaultModel || 'gemini-1.5-flash';
+
+    const systemPrompt =
+      'You are an English teacher. Output ONLY one natural English example sentence (A2-B1 level, 8-15 words) using the specified word in the intended French sense. No quotes, no intro.';
+    const userPrompt = `Word: ${params.english} (French: ${params.french})`;
+
     try {
-      const endpoint = params.apiEndpoint || 'https://api.openai.com/v1';
-      const url = `${endpoint.replace(/\/+$/, '')}/chat/completions`;
+      console.log(`[LlmManager] Requête API distante vers : ${targetUrl} (modèle: ${model}, fournisseur: ${provider})`);
 
-      const systemPrompt =
-        'You are an English teacher. Output ONLY one natural English example sentence (A2-B1 level, 8-15 words) using the specified word in the intended French sense. No quotes, no intro.';
-      const userPrompt = `Word: ${params.english} (French: ${params.french})`;
-
-      const res = await fetch(url, {
+      const res = await fetch(targetUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${params.apiKey}`,
+          Authorization: `Bearer ${cleanKey}`,
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model,
           messages: [
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
@@ -774,22 +937,40 @@ export class LlmManager {
           temperature: 0.3,
           max_tokens: 40,
         }),
-        signal: AbortSignal.timeout(12000),
+        signal: AbortSignal.timeout(15000),
       });
 
       if (!res.ok) {
-        return { success: false, error: `Erreur API: HTTP ${res.status}` };
+        const errorBody = await res.json().catch(() => null);
+        const formattedErr = formatApiError(res.status, errorBody, provider, cleanKey, endpoint);
+        return { success: false, error: formattedErr };
       }
 
-      const json = await res.json();
-      const content = json.choices?.[0]?.message?.content || '';
+      const json = await res.json().catch(() => null);
+      const content = json?.choices?.[0]?.message?.content || '';
       const qc = validateSentenceQuality(content, params.english);
 
       if (qc.isValid && qc.cleanSentence) {
         return { success: true, sentence: qc.cleanSentence };
       }
-      return { success: false, error: 'Réponse API non conforme au contrôle qualité' };
+      return {
+        success: false,
+        error: qc.reason || 'Réponse API non conforme au contrôle qualité',
+      };
     } catch (err: any) {
+      if (err.name === 'AbortError' || err.name === 'TimeoutError') {
+        return { success: false, error: 'Délai maximal de réponse API dépassé (15 s).' };
+      }
+      if (
+        err.message?.includes('fetch failed') ||
+        err.message?.includes('ENOTFOUND') ||
+        err.message?.includes('ECONNREFUSED')
+      ) {
+        return {
+          success: false,
+          error: 'Impossible de joindre le service : vérifie ta connexion ou ton pare-feu.',
+        };
+      }
       return { success: false, error: err.message };
     }
   }
@@ -803,8 +984,10 @@ export class LlmManager {
     cascadeOrder?: ExampleSourceType[];
     localLlmEnabled?: boolean;
     localLlmModel?: LocalLlmModelType;
+    aiApiProvider?: AiApiProvider;
     aiApiKey?: string;
     aiApiEndpoint?: string;
+    aiApiModel?: string;
     skipSentence?: string;
     priority?: 'normal' | 'immediate';
   }): Promise<{
@@ -978,6 +1161,8 @@ export class LlmManager {
               french: params.french,
               apiKey: params.aiApiKey,
               apiEndpoint: params.aiApiEndpoint,
+              provider: params.aiApiProvider,
+              model: params.aiApiModel,
             });
 
             if (apiRes.success && apiRes.sentence) {

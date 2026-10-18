@@ -13,6 +13,7 @@ import {
   SentenceQueueItem,
   ExampleSourceType,
   LlmStatusEvent,
+  AiApiProvider,
 } from '../shared/types';
 
 export type { AudioEngineStatus };
@@ -95,6 +96,17 @@ export interface ElectronAPI {
     partOfSpeech?: string;
     modelType?: LocalLlmModelType;
   }) => Promise<{ success: boolean; sentence?: string; error?: string }>;
+  testAiApiKey: (params: {
+    provider?: AiApiProvider;
+    apiKey: string;
+    apiEndpoint?: string;
+  }) => Promise<{ success: boolean; models?: string[]; error?: string; message?: string }>;
+  testAiGeneration: (params: {
+    provider?: AiApiProvider;
+    apiKey: string;
+    apiEndpoint?: string;
+    model?: string;
+  }) => Promise<{ success: boolean; sentence?: string; durationMs?: number; error?: string }>;
   resolveSentenceCascade: (params: {
     english: string;
     french: string;
@@ -103,8 +115,10 @@ export interface ElectronAPI {
     cascadeOrder?: ExampleSourceType[];
     localLlmEnabled?: boolean;
     localLlmModel?: LocalLlmModelType;
+    aiApiProvider?: AiApiProvider;
     aiApiKey?: string;
     aiApiEndpoint?: string;
+    aiApiModel?: string;
     skipSentence?: string;
     priority?: 'normal' | 'immediate';
   }) => Promise<{

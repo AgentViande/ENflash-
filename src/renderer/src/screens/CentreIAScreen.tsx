@@ -36,7 +36,13 @@ import {
   SpeedTestResult,
   ExampleSourceType,
   SentenceQueueItem,
+  AiApiProvider,
 } from '../../../shared/types';
+import {
+  AI_PROVIDERS,
+  AI_PROVIDER_LIST,
+  detectProviderFromKey,
+} from '../../../shared/constants/aiProviders';
 import { AudioEngineStatus } from '../../../preload/types';
 import { AVAILABLE_KOKORO_VOICES, getDefaultVoiceForAccent } from '../../../shared/audio/kokoroVoices';
 import { speakText, runVoiceComparison } from '../utils/audio';
@@ -85,6 +91,15 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
   const [showApiKey, setShowApiKey] = useState<boolean>(false);
   const [testApiResult, setTestApiResult] = useState<{ success?: boolean; message?: string } | null>(null);
   const [isTestingApiKey, setIsTestingApiKey] = useState<boolean>(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [isTestingGeneration, setIsTestingGeneration] = useState<boolean>(false);
+  const [testGenerationResult, setTestGenerationResult] = useState<{
+    success?: boolean;
+    sentence?: string;
+    durationMs?: number;
+    error?: string;
+  } | null>(null);
+  const [isManualModelInput, setIsManualModelInput] = useState<boolean>(false);
 
   // File de génération
   const [isGeneratingMissing, setIsGeneratingMissing] = useState<boolean>(false);
@@ -326,33 +341,123 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
     }
   };
 
-  // Actions Clé API
+  // Actions Clé API & Fournisseur
+  const handleSelectProvider = (newProvider: AiApiProvider) => {
+    const config = AI_PROVIDERS[newProvider];
+    const newEndpoint = config ? config.defaultEndpoint : '';
+    const newModel = config ? config.defaultModel : '';
+
+    // Récupérer la clé déjà enregistrée pour ce fournisseur spécifique (si elle existe)
+    const existingKeys: Partial<Record<AiApiProvider, string>> = { ...(settings.aiApiKeys || {}) };
+    if (settings.aiApiKey && settings.aiApiProvider) {
+      existingKeys[settings.aiApiProvider] = settings.aiApiKey;
+    }
+    const keyForNewProvider = existingKeys[newProvider] || '';
+
+    updateSettings({
+      aiApiProvider: newProvider,
+      aiApiEndpoint: newEndpoint,
+      aiApiModel: newModel,
+      aiApiKey: keyForNewProvider,
+      aiApiKeys: existingKeys,
+    });
+    setTestApiResult(null);
+    setTestGenerationResult(null);
+    setAvailableModels(config?.recommendedModels || []);
+    setIsManualModelInput(false);
+  };
+
+  const handleApiKeyChange = (newKey: string) => {
+    const trimmed = newKey.trim();
+    const detected = detectProviderFromKey(trimmed);
+    const currentProvider = settings.aiApiProvider || 'gemini';
+    const targetProvider = detected || currentProvider;
+
+    const updatedKeys: Partial<Record<AiApiProvider, string>> = { ...(settings.aiApiKeys || {}) };
+    updatedKeys[targetProvider] = newKey;
+
+    const updates: Partial<typeof settings> = {
+      aiApiKey: newKey,
+      aiApiKeys: updatedKeys,
+    };
+    if (detected && detected !== currentProvider) {
+      const config = AI_PROVIDERS[detected];
+      updates.aiApiProvider = detected;
+      updates.aiApiEndpoint = config.defaultEndpoint;
+      updates.aiApiModel = config.defaultModel;
+      setAvailableModels(config.recommendedModels || []);
+      showToast(`Fournisseur détecté : ${config.name}`);
+    }
+    updateSettings(updates);
+    setTestApiResult(null);
+    setTestGenerationResult(null);
+  };
+
   const handleTestApiKey = async () => {
-    if (!settings.aiApiKey || !settings.aiApiKey.trim()) {
+    const key = (settings.aiApiKey || '').trim();
+    if (!key) {
       setTestApiResult({ success: false, message: 'Veuillez saisir une clé API' });
       return;
     }
+    const provider = settings.aiApiProvider || 'gemini';
     setIsTestingApiKey(true);
     setTestApiResult(null);
     try {
-      if (window.api?.resolveSentenceCascade) {
-        const res = await window.api.resolveSentenceCascade({
-          english: 'sky',
-          french: 'ciel',
-          cascadeOrder: ['api'],
-          aiApiKey: settings.aiApiKey,
-          aiApiEndpoint: settings.aiApiEndpoint,
+      if (window.api?.testAiApiKey) {
+        const res = await window.api.testAiApiKey({
+          provider,
+          apiKey: key,
+          apiEndpoint: settings.aiApiEndpoint,
         });
-        if (res && res.sentence) {
-          setTestApiResult({ success: true, message: `Clé valide ! Exemple généré : « ${res.sentence} »` });
+        if (res.success) {
+          if (res.models && res.models.length > 0) {
+            setAvailableModels(res.models);
+            if (!settings.aiApiModel || !res.models.includes(settings.aiApiModel)) {
+              updateSettings({ aiApiModel: res.models[0] });
+            }
+          }
+          setTestApiResult({
+            success: true,
+            message: res.message || 'Clé valide ✅',
+          });
         } else {
-          setTestApiResult({ success: false, message: res?.error || 'Échec de connexion avec la clé API' });
+          setTestApiResult({
+            success: false,
+            message: res.error || 'Échec de validation de la clé API',
+          });
         }
       }
     } catch (err: any) {
       setTestApiResult({ success: false, message: `Erreur: ${err.message}` });
     } finally {
       setIsTestingApiKey(false);
+    }
+  };
+
+  const handleTestAiGeneration = async () => {
+    const key = (settings.aiApiKey || '').trim();
+    if (!key) {
+      setTestGenerationResult({ success: false, error: 'Veuillez saisir une clé API' });
+      return;
+    }
+    const provider = settings.aiApiProvider || 'gemini';
+    const model = settings.aiApiModel || AI_PROVIDERS[provider]?.defaultModel || 'gemini-1.5-flash';
+    setIsTestingGeneration(true);
+    setTestGenerationResult(null);
+    try {
+      if (window.api?.testAiGeneration) {
+        const res = await window.api.testAiGeneration({
+          provider,
+          apiKey: key,
+          apiEndpoint: settings.aiApiEndpoint,
+          model,
+        });
+        setTestGenerationResult(res);
+      }
+    } catch (err: any) {
+      setTestGenerationResult({ success: false, error: err.message });
+    } finally {
+      setIsTestingGeneration(false);
     }
   };
 
@@ -1692,128 +1797,383 @@ export const CentreIAScreen: React.FC<CentreIAScreenProps> = ({ initialTab = 'ov
       )}
 
       {/* 5. CLÉ API PERSONNELLE */}
-      {activeTab === 'api_key' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div
-            style={{
-              backgroundColor: 'var(--bg-card)',
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 'var(--radius-xl)',
-              padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '16px',
-            }}
-          >
-            <div>
-              <div style={{ fontWeight: 800, fontSize: '1.05rem' }}>Clé API externe (Facultatif / Option Qualité+)</div>
-              <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
-                Si vous possédez une clé OpenAI, Groq, Mistral ou compatible, vous pouvez la renseigner ici.
-              </p>
-            </div>
+      {activeTab === 'api_key' && (() => {
+        const currentProvider: AiApiProvider = settings.aiApiProvider || 'gemini';
+        const currentConfig = AI_PROVIDERS[currentProvider] || AI_PROVIDERS.gemini;
+        const modelsList = availableModels.length > 0 ? availableModels : currentConfig.recommendedModels;
 
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>Clé API</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={settings.aiApiKey || ''}
-                  onChange={(e) => updateSettings({ aiApiKey: e.target.value })}
-                  placeholder="sk-..."
-                  style={{ flex: 1, padding: '8px 12px' }}
-                />
-                <button
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  style={{
-                    backgroundColor: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-subtle)',
-                    padding: '8px 12px',
-                    borderRadius: 'var(--radius-md)',
-                    cursor: 'pointer',
-                  }}
-                  title={showApiKey ? 'Masquer la clé' : 'Afficher la clé'}
-                >
-                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-xl)',
+                padding: '24px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '20px',
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '1.05rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Key size={18} color="var(--color-primary)" />
+                  <span>Clé API externe (Option Qualité+)</span>
+                </div>
+                <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '4px 0 0' }}>
+                  Connectez votre propre fournisseur d’intelligence artificielle pour générer des phrases d’exemples personnalisées. Google Gemini offre un quota gratuit généreux et rapide.
+                </p>
               </div>
-            </div>
 
-            <div>
-              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px' }}>
-                Endpoint d'API compatible OpenAI (Facultatif)
-              </label>
-              <input
-                type="text"
-                value={settings.aiApiEndpoint || ''}
-                onChange={(e) => updateSettings({ aiApiEndpoint: e.target.value })}
-                placeholder="https://api.openai.com/v1 (ou endpoint Groq / OpenRouter)"
-                style={{ width: '100%', padding: '8px 12px' }}
-              />
-            </div>
+              {/* 1. Sélecteur de fournisseur */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px' }}>
+                  Fournisseur d'IA
+                </label>
+                <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+                  <select
+                    value={currentProvider}
+                    onChange={(e) => handleSelectProvider(e.target.value as AiApiProvider)}
+                    style={{
+                      flex: 1,
+                      minWidth: '240px',
+                      padding: '9px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {AI_PROVIDER_LIST.map((prov) => (
+                      <option key={prov.id} value={prov.id}>
+                        {prov.name} {prov.id === 'gemini' ? '★ (Recommandé, gratuit)' : ''}
+                      </option>
+                    ))}
+                  </select>
 
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '6px' }}>
-              <button
-                onClick={handleTestApiKey}
-                disabled={isTestingApiKey || !settings.aiApiKey}
-                style={{
-                  backgroundColor: 'var(--color-primary)',
-                  color: '#fff',
-                  border: 'none',
-                  padding: '8px 16px',
-                  borderRadius: 'var(--radius-md)',
-                  fontWeight: 700,
-                  fontSize: '0.85rem',
-                  cursor: isTestingApiKey || !settings.aiApiKey ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {isTestingApiKey ? 'Test en cours...' : 'Tester la clé'}
-              </button>
+                  {currentConfig.helpUrl && (
+                    <a
+                      href={currentConfig.helpUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontSize: '0.8rem',
+                        color: 'var(--color-primary)',
+                        textDecoration: 'none',
+                        fontWeight: 600,
+                        padding: '6px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                      }}
+                    >
+                      <span>Obtenir une clé {currentConfig.name.split(' ')[0]}</span>
+                      <ExternalLink size={13} />
+                    </a>
+                  )}
+                </div>
+                <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  {currentConfig.description}
+                </div>
+              </div>
 
-              {settings.aiApiKey && (
-                <button
-                  onClick={() => {
-                    updateSettings({ aiApiKey: '' });
-                    setTestApiResult(null);
-                    showToast('Clé API supprimée');
+              {/* 2. Endpoint d'API */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700 }}>
+                    Endpoint de connexion (URL)
+                  </label>
+                  {!currentConfig.isEndpointEditable && (
+                    <span style={{ fontSize: '0.72rem', color: '#10b981', fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                      🔒 Endpoint officiel vérifié
+                    </span>
+                  )}
+                </div>
+                <input
+                  type="text"
+                  value={settings.aiApiEndpoint || currentConfig.defaultEndpoint}
+                  onChange={(e) => {
+                    if (currentConfig.isEndpointEditable) {
+                      updateSettings({ aiApiEndpoint: e.target.value });
+                    }
                   }}
+                  readOnly={!currentConfig.isEndpointEditable}
+                  placeholder={currentConfig.defaultEndpoint}
                   style={{
-                    backgroundColor: 'transparent',
-                    color: '#ef4444',
-                    border: '1px solid rgba(239, 68, 68, 0.4)',
+                    width: '100%',
                     padding: '8px 12px',
+                    backgroundColor: currentConfig.isEndpointEditable ? 'var(--bg-input)' : 'var(--bg-secondary)',
+                    color: currentConfig.isEndpointEditable ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    cursor: currentConfig.isEndpointEditable ? 'text' : 'not-allowed',
+                    fontSize: '0.85rem',
+                  }}
+                />
+              </div>
+
+              {/* 3. Clé API */}
+              <div>
+                <label style={{ display: 'block', fontSize: '0.82rem', fontWeight: 700, marginBottom: '6px' }}>
+                  Clé API secrète ({currentConfig.name})
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <input
+                    type={showApiKey ? 'text' : 'password'}
+                    value={settings.aiApiKey || ''}
+                    onChange={(e) => handleApiKeyChange(e.target.value)}
+                    placeholder={`Exemple: ${currentConfig.keyPlaceholder}`}
+                    style={{
+                      flex: 1,
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-subtle)',
+                      backgroundColor: 'var(--bg-input)',
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                    style={{
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                    title={showApiKey ? 'Masquer la clé' : 'Afficher la clé'}
+                  >
+                    {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {!settings.aiApiKey && (
+                  <div style={{ fontSize: '0.78rem', color: '#f59e0b', marginTop: '6px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '5px' }}>
+                    <span>ℹ️ Aucune clé enregistrée pour {currentConfig.name}. Saisissez votre clé ci-dessus pour activer ce fournisseur.</span>
+                  </div>
+                )}
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                  🛡️ La clé est chiffrée sur votre PC via safeStorage et n'est jamais transmise à des tiers.
+                </div>
+              </div>
+
+              {/* 4. Choix du modèle */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ fontSize: '0.82rem', fontWeight: 700 }}>
+                    Modèle sélectionné
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsManualModelInput(!isManualModelInput)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--color-primary)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      padding: 0,
+                    }}
+                  >
+                    {isManualModelInput ? '← Choisir dans la liste' : '+ Saisie manuelle'}
+                  </button>
+                </div>
+
+                {isManualModelInput ? (
+                  <input
+                    type="text"
+                    value={settings.aiApiModel || ''}
+                    onChange={(e) => updateSettings({ aiApiModel: e.target.value })}
+                    placeholder="Nom exact du modèle (ex: gemini-1.5-flash, gpt-4o-mini)"
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-subtle)',
+                      fontSize: '0.85rem',
+                    }}
+                  />
+                ) : (
+                  <select
+                    value={settings.aiApiModel || currentConfig.defaultModel}
+                    onChange={(e) => updateSettings({ aiApiModel: e.target.value })}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--bg-secondary)',
+                      color: 'var(--text-primary)',
+                      border: '1px solid var(--border-subtle)',
+                      fontWeight: 700,
+                      fontSize: '0.85rem',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {modelsList.map((m) => (
+                      <option key={m} value={m}>
+                        {m} {m === currentConfig.defaultModel ? '★ (Défaut recommandé)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              {/* 5. Boutons de test en 2 temps */}
+              <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center', marginTop: '4px' }}>
+                {/* Étape 1 : Tester la clé & charger modèles */}
+                <button
+                  type="button"
+                  onClick={handleTestApiKey}
+                  disabled={isTestingApiKey || !settings.aiApiKey}
+                  style={{
+                    backgroundColor: 'var(--color-primary)',
+                    color: '#fff',
+                    border: 'none',
+                    padding: '9px 16px',
                     borderRadius: 'var(--radius-md)',
                     fontWeight: 700,
                     fontSize: '0.85rem',
-                    cursor: 'pointer',
+                    cursor: isTestingApiKey || !settings.aiApiKey ? 'not-allowed' : 'pointer',
+                    opacity: !settings.aiApiKey ? 0.6 : 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
                   }}
                 >
-                  Supprimer ma clé
+                  <Key size={14} className={isTestingApiKey ? 'animate-spin' : ''} />
+                  <span>{isTestingApiKey ? 'Vérification en cours...' : '1. Tester la clé (vérifier l’accès)'}</span>
                 </button>
-              )}
-            </div>
 
-            {testApiResult && (
+                {/* Étape 2 : Tester la génération */}
+                <button
+                  type="button"
+                  onClick={handleTestAiGeneration}
+                  disabled={isTestingGeneration || !settings.aiApiKey}
+                  style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    color: 'var(--text-primary)',
+                    border: '1px solid var(--border-subtle)',
+                    padding: '9px 16px',
+                    borderRadius: 'var(--radius-md)',
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    cursor: isTestingGeneration || !settings.aiApiKey ? 'not-allowed' : 'pointer',
+                    opacity: !settings.aiApiKey ? 0.6 : 1,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                  }}
+                >
+                  <Sparkles size={14} className={isTestingGeneration ? 'animate-spin' : ''} />
+                  <span>{isTestingGeneration ? 'Génération...' : '2. Tester la génération d’une phrase'}</span>
+                </button>
+
+                {/* Supprimer la clé */}
+                {settings.aiApiKey && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const currentProv = settings.aiApiProvider || 'gemini';
+                      const updatedKeys: Partial<Record<AiApiProvider, string>> = { ...(settings.aiApiKeys || {}) };
+                      delete updatedKeys[currentProv];
+                      updateSettings({ aiApiKey: '', aiApiKeys: updatedKeys });
+                      setTestApiResult(null);
+                      setTestGenerationResult(null);
+                      showToast('Clé API supprimée');
+                    }}
+                    style={{
+                      backgroundColor: 'transparent',
+                      color: '#ef4444',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-md)',
+                      fontWeight: 700,
+                      fontSize: '0.82rem',
+                      cursor: 'pointer',
+                      marginLeft: 'auto',
+                    }}
+                  >
+                    Supprimer ma clé
+                  </button>
+                )}
+              </div>
+
+              {/* Résultat du test de clé */}
+              {testApiResult && (
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: testApiResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                    border: testApiResult.success ? '1px solid rgba(16, 185, 129, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                    color: testApiResult.success ? '#10b981' : '#ef4444',
+                    fontSize: '0.84rem',
+                    fontWeight: 600,
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    gap: '8px',
+                  }}
+                >
+                  <span style={{ fontSize: '1rem', lineHeight: '1.2' }}>{testApiResult.success ? '✓' : '⚠️'}</span>
+                  <div style={{ flex: 1 }}>{testApiResult.message}</div>
+                </div>
+              )}
+
+              {/* Résultat du test de génération */}
+              {testGenerationResult && (
+                <div
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: testGenerationResult.success ? 'rgba(99, 102, 241, 0.08)' : 'rgba(239, 68, 68, 0.1)',
+                    border: testGenerationResult.success ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid rgba(239, 68, 68, 0.3)',
+                    fontSize: '0.84rem',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px',
+                  }}
+                >
+                  {testGenerationResult.success ? (
+                    <>
+                      <div style={{ fontWeight: 800, color: 'var(--color-primary)' }}>
+                        ✓ Phrase générée avec succès en {testGenerationResult.durationMs} ms :
+                      </div>
+                      <div style={{ fontStyle: 'italic', color: 'var(--text-primary)' }}>
+                        « {testGenerationResult.sentence} »
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ color: '#ef4444', fontWeight: 600 }}>
+                      ⚠️ {testGenerationResult.error}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div
                 style={{
-                  padding: '10px 14px',
+                  backgroundColor: 'var(--bg-secondary)',
                   borderRadius: 'var(--radius-md)',
-                  backgroundColor: testApiResult.success ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
-                  color: testApiResult.success ? '#10b981' : '#ef4444',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
+                  padding: '12px 14px',
+                  fontSize: '0.8rem',
+                  color: 'var(--text-muted)',
                 }}
               >
-                {testApiResult.success ? '✓ ' : '⚠️ '}
-                {testApiResult.message}
+                🔒 <strong>Confidentialité garantie :</strong> Seuls le mot anglais et sa traduction française sont transmis à l’API choisie pour composer l’exemple. Aucune donnée personnelle, statistique ou historique n'est partagée.
               </div>
-            )}
-
-            <div style={{ backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px 14px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              🔒 <strong>Confidentialité garantie :</strong> Seuls le mot anglais et sa traduction française sont transmis à l’API distante pour générer l'exemple. Aucune information personnelle, compte ou identifiant n'est partagé.
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 6. FILE DE GÉNÉRATION */}
       {activeTab === 'queue' && (

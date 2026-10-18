@@ -61,6 +61,8 @@ const api: ElectronAPI = {
   testLlmSpeed: (modelType) => ipcRenderer.invoke('llm:testSpeed', modelType),
   preloadLlmModel: (modelType) => ipcRenderer.invoke('llm:preloadModel', modelType),
   generateSentence: (params) => ipcRenderer.invoke('llm:generateSentence', params),
+  testAiApiKey: (params) => ipcRenderer.invoke('llm:testAiApiKey', params),
+  testAiGeneration: (params) => ipcRenderer.invoke('llm:testAiGeneration', params),
   resolveSentenceCascade: (params) => ipcRenderer.invoke('llm:resolveCascade', params),
 
   // File d'attente des phrases

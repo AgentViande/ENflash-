@@ -166,8 +166,10 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           cascadeOrder: db?.settings.exampleCascadeOrder,
           localLlmEnabled: db?.settings.localLlmEnabled,
           localLlmModel: db?.settings.localLlmModel,
+          aiApiProvider: db?.settings.aiApiProvider,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
+          aiApiModel: db?.settings.aiApiModel,
           priority: 'immediate',
         });
 
@@ -235,8 +237,10 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           cascadeOrder: db?.settings.exampleCascadeOrder,
           localLlmEnabled: db?.settings.localLlmEnabled,
           localLlmModel: db?.settings.localLlmModel,
+          aiApiProvider: db?.settings.aiApiProvider,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
+          aiApiModel: db?.settings.aiApiModel,
           priority: 'immediate',
         });
 

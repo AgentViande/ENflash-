@@ -6,7 +6,7 @@ import { sendDesktopNotification, startReminderScheduler } from '../notification
 import { getVoiceManager } from '../audio/voiceManager';
 import { getLlmManager } from '../llm/llmManager';
 import { getSentenceQueue } from '../llm/sentenceQueue';
-import { AppDatabase, Word, LocalLlmModelType, ExampleSourceType } from '../../shared/types';
+import { AppDatabase, Word, LocalLlmModelType, ExampleSourceType, AiApiProvider } from '../../shared/types';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const store = getDatabaseStore();
@@ -322,6 +322,35 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   );
 
   ipcMain.handle(
+    'llm:testAiApiKey',
+    async (
+      _event,
+      params: {
+        provider?: AiApiProvider;
+        apiKey: string;
+        apiEndpoint?: string;
+      }
+    ) => {
+      return llmManager.testAiApiKey(params);
+    }
+  );
+
+  ipcMain.handle(
+    'llm:testAiGeneration',
+    async (
+      _event,
+      params: {
+        provider?: AiApiProvider;
+        apiKey: string;
+        apiEndpoint?: string;
+        model?: string;
+      }
+    ) => {
+      return llmManager.testAiGeneration(params);
+    }
+  );
+
+  ipcMain.handle(
     'llm:resolveCascade',
     async (
       _event,
@@ -333,8 +362,12 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         cascadeOrder?: ExampleSourceType[];
         localLlmEnabled?: boolean;
         localLlmModel?: LocalLlmModelType;
+        aiApiProvider?: AiApiProvider;
         aiApiKey?: string;
         aiApiEndpoint?: string;
+        aiApiModel?: string;
+        skipSentence?: string;
+        priority?: 'normal' | 'immediate';
       }
     ) => {
       return llmManager.resolveSentenceCascade(params);

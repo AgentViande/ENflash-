@@ -435,8 +435,10 @@ export class SentenceQueue {
         cascadeOrder: settings.exampleCascadeOrder,
         localLlmEnabled: settings.localLlmEnabled,
         localLlmModel: settings.localLlmModel,
+        aiApiProvider: settings.aiApiProvider,
         aiApiKey: settings.aiApiKey,
         aiApiEndpoint: settings.aiApiEndpoint,
+        aiApiModel: settings.aiApiModel,
       });
 
       this.clearWatchdog();
