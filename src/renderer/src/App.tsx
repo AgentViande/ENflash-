@@ -19,11 +19,29 @@ import { useApp } from './contexts/AppContext';
 import { UpdateInfo } from '../../preload/types';
 
 export const App: React.FC = () => {
-  const { db, loading, newBadgeUnlocked, clearNewBadge, levelUpData, clearLevelUpData, updateSettings } = useApp();
+  const {
+    db,
+    loading,
+    newBadgeUnlocked,
+    clearNewBadge,
+    levelUpData,
+    clearLevelUpData,
+    updateSettings,
+    navigationTabRequest,
+    clearNavigationTabRequest,
+  } = useApp();
 
   const [currentTab, setCurrentTab] = useState<ScreenTab>('accueil');
   const [selectedPlaylistForStudy, setSelectedPlaylistForStudy] = useState<string | null>(null);
   const [isDailyModeActive, setIsDailyModeActive] = useState<boolean>(false);
+
+  // Synchronisation avec les requêtes de navigation globales (ex: ouvrir Centre IA depuis n'importe où)
+  useEffect(() => {
+    if (navigationTabRequest) {
+      setCurrentTab(navigationTabRequest as ScreenTab);
+      clearNavigationTabRequest();
+    }
+  }, [navigationTabRequest, clearNavigationTabRequest]);
 
   // Modales globales
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false);

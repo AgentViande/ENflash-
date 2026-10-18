@@ -10,13 +10,14 @@ interface QuickAddModalProps {
 }
 
 export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose }) => {
-  const { db, addWord } = useApp();
+  const { db, addWord, openCentreIA } = useApp();
 
   const [french, setFrench] = useState('');
   const [english, setEnglish] = useState('');
   const [example, setExample] = useState('');
   const [exampleSource, setExampleSource] = useState<ExampleSourceType | undefined>(undefined);
   const [isGeneratingExample, setIsGeneratingExample] = useState(false);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
   const [note, setNote] = useState('');
@@ -26,6 +27,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
   const [successToast, setSuccessToast] = useState<string | null>(null);
 
   const frenchInputRef = useRef<HTMLInputElement>(null);
+  const isCancelledRef = useRef<boolean>(false);
 
   // Focus automatique à l'ouverture
   useEffect(() => {
@@ -35,6 +37,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
       }, 50);
       setDuplicateWarning(null);
       setSuccessToast(null);
+      setGenerationError(null);
     }
   }, [isOpen]);
 
@@ -57,16 +60,25 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     setDuplicateWarning(found || null);
   }, [french, english, db]);
 
-  // Générer une phrase d'exemple en direct avec l'IA
-  const handleGenerateExample = async () => {
+  // Générer une phrase d'exemple en direct avec l'IA (Prioritaire / immédiat)
+  const handleGenerateExample = async (skipCurrent: boolean = false) => {
     if (!english.trim() || isGeneratingExample) return;
     setIsGeneratingExample(true);
+    setGenerationError(null);
+    isCancelledRef.current = false;
+
+    // Timeout de 15 secondes max
+    const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
+      (_, reject) => setTimeout(() => reject(new Error('Délai maximal de génération dépassé (15s)')), 15000)
+    );
+
     try {
       if (window.api?.resolveSentenceCascade) {
-        const res = await window.api.resolveSentenceCascade({
+        const generationPromise = window.api.resolveSentenceCascade({
           english: english.trim(),
           french: french.trim(),
-          existingExample: example.trim(),
+          existingExample: skipCurrent ? undefined : example.trim(),
+          skipSentence: skipCurrent ? example.trim() : undefined,
           cascadeOrder: db?.settings.exampleCascadeOrder,
           localLlmEnabled: db?.settings.localLlmEnabled,
           localLlmModel: db?.settings.localLlmModel,
@@ -74,26 +86,30 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           aiApiEndpoint: db?.settings.aiApiEndpoint,
         });
 
+        const res = await Promise.race([generationPromise, timeoutPromise]);
+
+        if (isCancelledRef.current) return;
+
         if (res && res.sentence) {
           setExample(res.sentence);
           setExampleSource(res.source);
-        } else if (window.api?.generateSentence) {
-          const direct = await window.api.generateSentence({
-            english: english.trim(),
-            french: french.trim(),
-            modelType: db?.settings.localLlmModel || 'standard',
-          });
-          if (direct && direct.success && direct.sentence) {
-            setExample(direct.sentence);
-            setExampleSource('local_llm');
-          }
+          setGenerationError(null);
+        } else {
+          setGenerationError(res?.error || 'Aucune source disponible pour générer un exemple.');
         }
       }
-    } catch (err) {
-      console.error('Erreur génération exemple:', err);
+    } catch (err: any) {
+      if (!isCancelledRef.current) {
+        setGenerationError(err.message || 'Erreur lors de la génération');
+      }
     } finally {
       setIsGeneratingExample(false);
     }
+  };
+
+  const handleCancelGenerate = () => {
+    isCancelledRef.current = true;
+    setIsGeneratingExample(false);
   };
 
   // Écouter la phrase d'exemple avec Kokoro
@@ -345,30 +361,18 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                       padding: '2px 7px',
                       borderRadius: '4px',
                       backgroundColor:
-                        exampleSource === 'local_llm'
-                          ? 'rgba(99, 102, 241, 0.15)'
-                          : exampleSource === 'dictionary'
+                        exampleSource === 'dictionary'
                           ? 'rgba(16, 185, 129, 0.15)'
-                          : exampleSource === 'api'
-                          ? 'rgba(6, 182, 212, 0.15)'
-                          : 'rgba(245, 158, 11, 0.15)',
+                          : 'rgba(99, 102, 241, 0.15)',
                       color:
-                        exampleSource === 'local_llm'
-                          ? 'var(--color-primary)'
-                          : exampleSource === 'dictionary'
+                        exampleSource === 'dictionary'
                           ? '#10b981'
-                          : exampleSource === 'api'
-                          ? '#06b6d4'
-                          : '#f59e0b',
+                          : 'var(--color-primary)',
                     }}
                   >
-                    {exampleSource === 'local_llm'
-                      ? '🤖 IA locale (Qwen2.5)'
-                      : exampleSource === 'dictionary'
-                      ? '📖 Dictionnaire'
-                      : exampleSource === 'api'
-                      ? '✨ IA (API)'
-                      : '✍️ Ma phrase'}
+                    {exampleSource === 'dictionary'
+                      ? '📖 Source : dictionnaire'
+                      : '✨ Générée par IA'}
                   </span>
                 )}
               </div>
@@ -398,14 +402,15 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                   </button>
                 )}
 
+                {/* Bouton ✨ Générer une phrase (prioritaire) */}
                 <button
                   type="button"
-                  onClick={handleGenerateExample}
+                  onClick={() => handleGenerateExample(false)}
                   disabled={!english.trim() || isGeneratingExample}
                   title={
                     !english.trim()
-                      ? "Saisissez d'abord le mot en anglais pour générer une phrase"
-                      : "Générer automatiquement une phrase d'exemple avec l'IA"
+                      ? "Saisissez d'abord le mot en anglais"
+                      : "Générer immédiatement une phrase d'exemple"
                   }
                   style={{
                     background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.22))',
@@ -419,22 +424,67 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                     alignItems: 'center',
                     gap: '5px',
                     cursor: !english.trim() || isGeneratingExample ? 'not-allowed' : 'pointer',
-                    opacity: !english.trim() || isGeneratingExample ? 0.6 : 1,
-                    transition: 'all 0.15s ease',
+                    opacity: !english.trim() ? 0.6 : 1,
                   }}
                 >
                   {isGeneratingExample ? (
                     <>
                       <RotateCw size={13} className="animate-spin" />
-                      <span>Génération IA...</span>
+                      <span>Génération...</span>
                     </>
                   ) : (
                     <>
                       <Sparkles size={13} />
-                      <span>{example.trim() ? "Régénérer avec l'IA" : "Générer avec l'IA"}</span>
+                      <span>✨ Générer une phrase</span>
                     </>
                   )}
                 </button>
+
+                {/* Bouton ↻ Autre phrase */}
+                {example.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => handleGenerateExample(true)}
+                    disabled={!english.trim() || isGeneratingExample}
+                    title="Obtenir un autre exemple du dictionnaire ou de l'IA"
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                      padding: '4px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.75rem',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      cursor: !english.trim() || isGeneratingExample ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <RotateCw size={12} className={isGeneratingExample ? 'animate-spin' : ''} />
+                    <span>↻ Autre phrase</span>
+                  </button>
+                )}
+
+                {/* Bouton Annuler si génération en cours */}
+                {isGeneratingExample && (
+                  <button
+                    type="button"
+                    onClick={handleCancelGenerate}
+                    style={{
+                      background: 'transparent',
+                      border: '1px solid rgba(239, 68, 68, 0.4)',
+                      color: '#ef4444',
+                      padding: '4px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    ✕ Annuler
+                  </button>
+                )}
               </div>
             </div>
 
@@ -444,12 +494,52 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                 value={example}
                 onChange={(e) => {
                   setExample(e.target.value);
-                  setExampleSource('user');
+                  setExampleSource(undefined); // Le badge disparaît dès que l'utilisateur modifie
+                  setGenerationError(null);
                 }}
-                placeholder="Ex : The aircraft climbed into clear skies. (ou cliquez sur Générer avec l'IA)"
+                placeholder="Ex : An apple a day keeps the doctor away. (ou cliquez sur ✨ Générer une phrase)"
                 style={{ width: '100%' }}
               />
             </div>
+
+            {/* Message d'erreur lisible avec lien Centre IA */}
+            {generationError && (
+              <div
+                style={{
+                  marginTop: '6px',
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  fontSize: '0.78rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '8px',
+                }}
+              >
+                <span style={{ color: '#ef4444' }}>⚠️ {generationError}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    openCentreIA('local_model');
+                  }}
+                  style={{
+                    backgroundColor: 'transparent',
+                    border: 'none',
+                    color: 'var(--color-primary)',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    textDecoration: 'underline',
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  Ouvrir le Centre IA ➔
+                </button>
+              </div>
+            )}
 
             <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
               {!example.trim() ? (

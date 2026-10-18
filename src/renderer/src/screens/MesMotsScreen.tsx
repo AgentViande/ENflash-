@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Search,
   Plus,
@@ -13,6 +13,7 @@ import {
   Sparkles,
   X,
   RotateCw,
+  AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Word, LeitnerBox, ExampleSourceType } from '../../../shared/types';
@@ -23,7 +24,7 @@ interface MesMotsScreenProps {
 }
 
 export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) => {
-  const { db, updateWord, deleteWord, addWord, refreshDatabase, regenerateWordSentence } = useApp();
+  const { db, updateWord, deleteWord, addWord, refreshDatabase, regenerateWordSentence, openCentreIA } = useApp();
 
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'new' | 'learning' | 'mastered'>('all');
@@ -39,11 +40,15 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
   const [editExample, setEditExample] = useState('');
   const [editExampleSource, setEditExampleSource] = useState<ExampleSourceType | undefined>(undefined);
   const [isGeneratingEditExample, setIsGeneratingEditExample] = useState(false);
+  const [editGenerationError, setEditGenerationError] = useState<string | null>(null);
   const [isPlayingEditAudio, setIsPlayingEditAudio] = useState(false);
   const [generatingWordId, setGeneratingWordId] = useState<string | null>(null);
+  const [rowGenerationError, setRowGenerationError] = useState<{ wordId: string; error: string } | null>(null);
   const [editTags, setEditTags] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editBox, setEditBox] = useState<LeitnerBox>(1);
+
+  const isCancelledEditRef = useRef<boolean>(false);
 
   if (!db) return null;
 
@@ -94,17 +99,26 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     setEditTags((w.tags || []).join(', '));
     setEditNote(w.note || '');
     setEditBox(w.leitnerBox);
+    setEditGenerationError(null);
   };
 
-  const handleGenerateEditExample = async () => {
+  const handleGenerateEditExample = async (skipCurrent: boolean = false) => {
     if (!editEnglish.trim() || isGeneratingEditExample) return;
     setIsGeneratingEditExample(true);
+    setEditGenerationError(null);
+    isCancelledEditRef.current = false;
+
+    const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
+      (_, reject) => setTimeout(() => reject(new Error('Délai maximal dépassé (15s)')), 15000)
+    );
+
     try {
       if (window.api?.resolveSentenceCascade) {
-        const res = await window.api.resolveSentenceCascade({
+        const genPromise = window.api.resolveSentenceCascade({
           english: editEnglish.trim(),
           french: editFrench.trim(),
-          existingExample: editExample.trim(),
+          existingExample: skipCurrent ? undefined : editExample.trim(),
+          skipSentence: skipCurrent ? editExample.trim() : undefined,
           cascadeOrder: db?.settings.exampleCascadeOrder,
           localLlmEnabled: db?.settings.localLlmEnabled,
           localLlmModel: db?.settings.localLlmModel,
@@ -112,26 +126,29 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           aiApiEndpoint: db?.settings.aiApiEndpoint,
         });
 
+        const res = await Promise.race([genPromise, timeoutPromise]);
+        if (isCancelledEditRef.current) return;
+
         if (res && res.sentence) {
           setEditExample(res.sentence);
           setEditExampleSource(res.source);
-        } else if (window.api?.generateSentence) {
-          const direct = await window.api.generateSentence({
-            english: editEnglish.trim(),
-            french: editFrench.trim(),
-            modelType: db?.settings.localLlmModel || 'standard',
-          });
-          if (direct && direct.success && direct.sentence) {
-            setEditExample(direct.sentence);
-            setEditExampleSource('local_llm');
-          }
+          setEditGenerationError(null);
+        } else {
+          setEditGenerationError(res?.error || 'Aucune source disponible pour générer un exemple.');
         }
       }
-    } catch (err) {
-      console.error('Erreur génération exemple edit:', err);
+    } catch (err: any) {
+      if (!isCancelledEditRef.current) {
+        setEditGenerationError(err.message || 'Erreur lors de la génération');
+      }
     } finally {
       setIsGeneratingEditExample(false);
     }
+  };
+
+  const handleCancelEditGenerate = () => {
+    isCancelledEditRef.current = true;
+    setIsGeneratingEditExample(false);
   };
 
   const handlePlayEditExample = async () => {
@@ -151,15 +168,44 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     }
   };
 
-  const handleRegenerateRowSentence = async (wordId: string) => {
+  const handleGenerateRowSentence = async (word: Word, skipCurrent: boolean = false) => {
     if (generatingWordId) return;
-    setGeneratingWordId(wordId);
+    setGeneratingWordId(word.id);
+    setRowGenerationError(null);
+
+    const timeoutPromise = new Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>(
+      (_, reject) => setTimeout(() => reject(new Error('Délai dépassé (15s)')), 15000)
+    );
+
     try {
-      await regenerateWordSentence(wordId);
-    } catch (err) {
-      console.error('Erreur régénération exemple:', err);
+      if (window.api?.resolveSentenceCascade) {
+        const genPromise = window.api.resolveSentenceCascade({
+          english: word.english,
+          french: word.french,
+          existingExample: skipCurrent ? undefined : word.example,
+          skipSentence: skipCurrent ? word.example : undefined,
+          cascadeOrder: db?.settings.exampleCascadeOrder,
+          localLlmEnabled: db?.settings.localLlmEnabled,
+          localLlmModel: db?.settings.localLlmModel,
+          aiApiKey: db?.settings.aiApiKey,
+          aiApiEndpoint: db?.settings.aiApiEndpoint,
+        });
+
+        const res = await Promise.race([genPromise, timeoutPromise]);
+        if (res && res.sentence) {
+          await updateWord({
+            ...word,
+            example: res.sentence,
+            exampleSource: res.source,
+          });
+        } else {
+          setRowGenerationError({ wordId: word.id, error: res?.error || 'Aucune phrase trouvée pour ce mot' });
+        }
+      }
+    } catch (err: any) {
+      setRowGenerationError({ wordId: word.id, error: err.message || 'Erreur lors de la génération' });
     } finally {
-      setTimeout(() => setGeneratingWordId(null), 1200);
+      setGeneratingWordId(null);
     }
   };
 
@@ -172,12 +218,23 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
       .filter((t) => t.length > 0);
 
     const hasExample = Boolean(editExample && editExample.trim());
+    let sourceToSave: ExampleSourceType | undefined = undefined;
+    if (hasExample) {
+      if (editExampleSource) {
+        sourceToSave = editExampleSource;
+      } else if (editingWord.example === editExample.trim() && editingWord.exampleSource) {
+        sourceToSave = editingWord.exampleSource;
+      } else {
+        sourceToSave = 'user';
+      }
+    }
+
     await updateWord({
       ...editingWord,
       french: editFrench.trim(),
       english: editEnglish.trim(),
       example: editExample.trim(),
-      exampleSource: hasExample ? (editExampleSource || 'user') : undefined,
+      exampleSource: sourceToSave,
       tags,
       note: editNote.trim(),
       leitnerBox: editBox,
@@ -539,7 +596,7 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                           </button>
 
                           <button
-                            onClick={() => handleRegenerateRowSentence(w.id)}
+                            onClick={() => handleGenerateRowSentence(w, true)}
                             disabled={generatingWordId === w.id}
                             title="Régénérer cette phrase avec l'IA"
                             style={{
@@ -558,14 +615,14 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       ) : (
                         <div style={{ marginTop: '4px' }}>
                           <button
-                            onClick={() => handleRegenerateRowSentence(w.id)}
+                            onClick={() => handleGenerateRowSentence(w, false)}
                             disabled={generatingWordId === w.id}
                             style={{
                               background: 'rgba(99, 102, 241, 0.1)',
                               border: '1px solid rgba(99, 102, 241, 0.3)',
                               color: 'var(--color-primary)',
                               borderRadius: 'var(--radius-sm)',
-                              padding: '2px 8px',
+                              padding: '3px 8px',
                               fontSize: '0.72rem',
                               fontWeight: 700,
                               display: 'inline-flex',
@@ -577,14 +634,52 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                             {generatingWordId === w.id ? (
                               <>
                                 <RotateCw size={11} className="animate-spin" />
-                                <span>Génération IA...</span>
+                                <span>Génération...</span>
                               </>
                             ) : (
                               <>
                                 <Sparkles size={11} />
-                                <span>+ Générer un exemple (IA)</span>
+                                <span>✨ Générer une phrase</span>
                               </>
                             )}
+                          </button>
+                        </div>
+                      )}
+
+                      {rowGenerationError?.wordId === w.id && (
+                        <div
+                          style={{
+                            marginTop: '4px',
+                            fontSize: '0.72rem',
+                            color: '#ef4444',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                          }}
+                        >
+                          <span>{rowGenerationError.error}</span>
+                          <button
+                            onClick={() =>
+                              openCentreIA(
+                                rowGenerationError.error.toLowerCase().includes('local')
+                                  ? 'local_model'
+                                  : rowGenerationError.error.toLowerCase().includes('clé')
+                                  ? 'api_key'
+                                  : 'sentences'
+                              )
+                            }
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'var(--color-primary)',
+                              textDecoration: 'underline',
+                              cursor: 'pointer',
+                              fontSize: '0.72rem',
+                              fontWeight: 600,
+                            }}
+                          >
+                            Centre IA ➔
                           </button>
                         </div>
                       )}
@@ -774,30 +869,18 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                           padding: '2px 7px',
                           borderRadius: '4px',
                           backgroundColor:
-                            editExampleSource === 'local_llm'
-                              ? 'rgba(99, 102, 241, 0.15)'
-                              : editExampleSource === 'dictionary'
+                            editExampleSource === 'dictionary'
                               ? 'rgba(16, 185, 129, 0.15)'
-                              : editExampleSource === 'api'
-                              ? 'rgba(6, 182, 212, 0.15)'
-                              : 'rgba(245, 158, 11, 0.15)',
+                              : 'rgba(99, 102, 241, 0.15)',
                           color:
-                            editExampleSource === 'local_llm'
-                              ? 'var(--color-primary)'
-                              : editExampleSource === 'dictionary'
+                            editExampleSource === 'dictionary'
                               ? '#10b981'
-                              : editExampleSource === 'api'
-                              ? '#06b6d4'
-                              : '#f59e0b',
+                              : 'var(--color-primary)',
                         }}
                       >
-                        {editExampleSource === 'local_llm'
-                          ? '🤖 IA locale (Qwen2.5)'
-                          : editExampleSource === 'dictionary'
-                          ? '📖 Dictionnaire'
-                          : editExampleSource === 'api'
-                          ? '✨ IA (API)'
-                          : '✍️ Ma phrase'}
+                        {editExampleSource === 'dictionary'
+                          ? '📖 Source : dictionnaire'
+                          : '✨ Générée par IA'}
                       </span>
                     )}
                   </div>
@@ -827,11 +910,16 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       </button>
                     )}
 
+                    {/* Bouton ✨ Générer une phrase */}
                     <button
                       type="button"
-                      onClick={handleGenerateEditExample}
+                      onClick={() => handleGenerateEditExample(false)}
                       disabled={!editEnglish.trim() || isGeneratingEditExample}
-                      title="Générer automatiquement avec l'IA"
+                      title={
+                        !editEnglish.trim()
+                          ? "Saisissez d'abord le mot en anglais"
+                          : "Générer immédiatement une phrase d'exemple"
+                      }
                       style={{
                         background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.22))',
                         border: '1px solid var(--color-primary)',
@@ -844,21 +932,67 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                         alignItems: 'center',
                         gap: '5px',
                         cursor: !editEnglish.trim() || isGeneratingEditExample ? 'not-allowed' : 'pointer',
-                        opacity: !editEnglish.trim() || isGeneratingEditExample ? 0.6 : 1,
+                        opacity: !editEnglish.trim() ? 0.6 : 1,
                       }}
                     >
                       {isGeneratingEditExample ? (
                         <>
                           <RotateCw size={13} className="animate-spin" />
-                          <span>Génération IA...</span>
+                          <span>Génération...</span>
                         </>
                       ) : (
                         <>
                           <Sparkles size={13} />
-                          <span>{editExample.trim() ? "Régénérer avec l'IA" : "Générer avec l'IA"}</span>
+                          <span>✨ Générer une phrase</span>
                         </>
                       )}
                     </button>
+
+                    {/* Bouton ↻ Autre phrase */}
+                    {editExample.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => handleGenerateEditExample(true)}
+                        disabled={!editEnglish.trim() || isGeneratingEditExample}
+                        title="Obtenir un autre exemple du dictionnaire ou de l'IA"
+                        style={{
+                          background: 'var(--bg-secondary)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-secondary)',
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: !editEnglish.trim() || isGeneratingEditExample ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <RotateCw size={12} className={isGeneratingEditExample ? 'animate-spin' : ''} />
+                        <span>↻ Autre phrase</span>
+                      </button>
+                    )}
+
+                    {/* Bouton Annuler si génération en cours */}
+                    {isGeneratingEditExample && (
+                      <button
+                        type="button"
+                        onClick={handleCancelEditGenerate}
+                        style={{
+                          background: 'transparent',
+                          border: '1px solid rgba(239, 68, 68, 0.4)',
+                          color: '#ef4444',
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '0.75rem',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        ✕ Annuler
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -867,11 +1001,59 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                   value={editExample}
                   onChange={(e) => {
                     setEditExample(e.target.value);
-                    setEditExampleSource('user');
+                    setEditExampleSource(undefined); // Le badge disparaît dès que l'utilisateur modifie
+                    setEditGenerationError(null);
                   }}
-                  placeholder="Ex : The aircraft climbed smoothly. (ou cliquez sur Générer avec l'IA)"
+                  placeholder="Ex : An apple a day keeps the doctor away. (ou cliquez sur ✨ Générer une phrase)"
                   style={{ width: '100%' }}
                 />
+
+                {/* Message d'erreur avec lien direct vers le Centre IA */}
+                {editGenerationError && (
+                  <div
+                    style={{
+                      marginTop: '6px',
+                      padding: '8px 12px',
+                      borderRadius: 'var(--radius-sm)',
+                      backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                      border: '1px solid rgba(239, 68, 68, 0.3)',
+                      fontSize: '0.78rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: '8px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#ef4444' }}>
+                      <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                      <span>{editGenerationError}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openCentreIA(
+                          editGenerationError.toLowerCase().includes('local')
+                            ? 'local_model'
+                            : editGenerationError.toLowerCase().includes('clé')
+                            ? 'api_key'
+                            : 'sentences'
+                        )
+                      }
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--color-primary)',
+                        textDecoration: 'underline',
+                        fontWeight: 700,
+                        fontSize: '0.75rem',
+                        cursor: 'pointer',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Ouvrir le Centre IA ➔
+                    </button>
+                  </div>
+                )}
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '12px' }}>

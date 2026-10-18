@@ -507,8 +507,9 @@ export class LlmManager {
 
   // --- Recherche dans le dictionnaire en ligne (dictionaryapi.dev) ---
   public async fetchDictionaryExample(
-    englishWord: string
-  ): Promise<{ sentence?: string; definition?: string; partOfSpeech?: string } | null> {
+    englishWord: string,
+    skipSentence?: string
+  ): Promise<{ sentence?: string; allExamples?: string[]; definition?: string; partOfSpeech?: string } | null> {
     try {
       const clean = englishWord.trim().toLowerCase();
       // Uniquement pour les mots uniques ou expressions simples
@@ -519,7 +520,7 @@ export class LlmManager {
       const data = await res.json();
       if (!Array.isArray(data) || data.length === 0) return null;
 
-      let foundExample: string | undefined;
+      const foundExamples: string[] = [];
       let foundDefinition: string | undefined;
       let foundPartOfSpeech: string | undefined;
 
@@ -534,10 +535,10 @@ export class LlmManager {
               if (!foundDefinition && def.definition) {
                 foundDefinition = def.definition;
               }
-              if (def.example && !foundExample) {
+              if (def.example) {
                 const qc = validateSentenceQuality(def.example, clean);
-                if (qc.isValid && qc.cleanSentence) {
-                  foundExample = qc.cleanSentence;
+                if (qc.isValid && qc.cleanSentence && !foundExamples.includes(qc.cleanSentence)) {
+                  foundExamples.push(qc.cleanSentence);
                 }
               }
             }
@@ -545,8 +546,18 @@ export class LlmManager {
         }
       }
 
+      // Si un skipSentence est fourni (ex: bouton "Autre phrase"), choisir une phrase différente
+      let chosenSentence: string | undefined = undefined;
+      if (foundExamples.length > 0) {
+        const different = skipSentence
+          ? foundExamples.filter((s) => s.toLowerCase() !== skipSentence.trim().toLowerCase())
+          : foundExamples;
+        chosenSentence = different.length > 0 ? different[0] : foundExamples[0];
+      }
+
       return {
-        sentence: foundExample,
+        sentence: chosenSentence,
+        allExamples: foundExamples,
         definition: foundDefinition,
         partOfSpeech: foundPartOfSpeech,
       };
@@ -616,9 +627,13 @@ export class LlmManager {
     localLlmModel?: LocalLlmModelType;
     aiApiKey?: string;
     aiApiEndpoint?: string;
-  }): Promise<{ sentence: string; source: ExampleSourceType } | null> {
-    // Règle 1 : Phrase écrite ou modifiée par l'utilisateur => JAMAIS écrasée
-    if (params.existingExample && params.existingSource === 'user') {
+    skipSentence?: string;
+  }): Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null> {
+    console.log(`[LlmManager] Début résolution cascade pour "${params.english}" (fr: "${params.french}")`);
+
+    // Règle 1 : Phrase écrite ou modifiée par l'utilisateur => JAMAIS écrasée (sauf si skipSentence explicitement demandé)
+    if (params.existingExample && params.existingSource === 'user' && !params.skipSentence) {
+      console.log(`[LlmManager] Phrase existante utilisateur conservée pour "${params.english}".`);
       return { sentence: params.existingExample, source: 'user' };
     }
 
@@ -629,33 +644,46 @@ export class LlmManager {
       'api',
     ];
 
-    // D'abord tenter de récupérer la définition et catégorie grammaticale pour le contexte
     let dictContext: {
       sentence?: string;
+      allExamples?: string[];
       definition?: string;
       partOfSpeech?: string;
     } | null = null;
 
     try {
-      dictContext = await this.fetchDictionaryExample(params.english);
-    } catch {}
+      dictContext = await this.fetchDictionaryExample(params.english, params.skipSentence);
+    } catch (err) {
+      console.warn(`[LlmManager] Erreur interrogation dictionnaire pour "${params.english}":`, err);
+    }
+
+    const failureReasons: string[] = [];
 
     for (const source of order) {
       if (source === 'user') {
-        if (params.existingExample && params.existingSource === 'user') {
+        if (params.existingExample && params.existingSource === 'user' && !params.skipSentence) {
           return { sentence: params.existingExample, source: 'user' };
         }
       } else if (source === 'dictionary') {
+        console.log(`[LlmManager] [Étape 1] Test source Dictionnaire pour "${params.english}"...`);
         if (dictContext && dictContext.sentence) {
           const qc = validateSentenceQuality(dictContext.sentence, params.english);
           if (qc.isValid && qc.cleanSentence) {
+            console.log(`[LlmManager] Succès Dictionnaire pour "${params.english}": « ${qc.cleanSentence} »`);
             return { sentence: qc.cleanSentence, source: 'dictionary' };
+          } else {
+            failureReasons.push('Exemple dictionnaire rejeté par le contrôle qualité');
           }
+        } else {
+          console.log(`[LlmManager] Dictionnaire : aucun exemple d’usage pour "${params.english}".`);
+          failureReasons.push('Aucun exemple dans le dictionnaire en ligne');
         }
       } else if (source === 'local_llm') {
+        console.log(`[LlmManager] [Étape 2] Test source Modèle local pour "${params.english}"...`);
         if (params.localLlmEnabled) {
           const modelType = params.localLlmModel || 'standard';
           if (this.isModelInstalled(modelType)) {
+            console.log(`[LlmManager] Modèle local ${modelType} prêt. Lancement de la génération...`);
             const llmRes = await this.generateSentenceWithLocalLlm({
               english: params.english,
               french: params.french,
@@ -665,11 +693,22 @@ export class LlmManager {
             });
 
             if (llmRes.success && llmRes.sentence) {
+              console.log(`[LlmManager] Succès Modèle local pour "${params.english}": « ${llmRes.sentence} »`);
               return { sentence: llmRes.sentence, source: 'local_llm' };
+            } else {
+              console.warn(`[LlmManager] Échec génération locale pour "${params.english}":`, llmRes.error);
+              failureReasons.push(`Modèle local: ${llmRes.error || 'non conforme'}`);
             }
+          } else {
+            console.log(`[LlmManager] Modèle local activé mais fichier non installé (${modelType}).`);
+            failureReasons.push('Modèle local non installé');
           }
+        } else {
+          console.log(`[LlmManager] Modèle local désactivé dans les paramètres.`);
+          failureReasons.push('Modèle local désactivé');
         }
       } else if (source === 'api') {
+        console.log(`[LlmManager] [Étape 3] Test source Clé API pour "${params.english}"...`);
         if (params.aiApiKey && params.aiApiKey.trim().length > 0) {
           const apiRes = await this.generateSentenceWithApi({
             english: params.english,
@@ -679,13 +718,32 @@ export class LlmManager {
           });
 
           if (apiRes.success && apiRes.sentence) {
+            console.log(`[LlmManager] Succès Clé API pour "${params.english}": « ${apiRes.sentence} »`);
             return { sentence: apiRes.sentence, source: 'api' };
+          } else {
+            console.warn(`[LlmManager] Échec API pour "${params.english}":`, apiRes.error);
+            failureReasons.push(`API: ${apiRes.error || 'erreur'}`);
           }
+        } else {
+          console.log(`[LlmManager] Clé API non configurée.`);
+          failureReasons.push('Clé API non configurée');
         }
       }
     }
 
-    return null;
+    // Aucune source n'a pu fournir de phrase valide
+    let detailedError = 'Aucun résultat trouvé dans la cascade';
+    const isLocalInstalled = this.isModelInstalled(params.localLlmModel || 'standard');
+    const hasApiKey = !!(params.aiApiKey && params.aiApiKey.trim().length > 0);
+
+    if (!isLocalInstalled && !hasApiKey) {
+      detailedError = 'Aucun exemple dans le dictionnaire • Modèle local non installé • Clé API non configurée';
+    } else if (failureReasons.length > 0) {
+      detailedError = failureReasons.join(' | ');
+    }
+
+    console.warn(`[LlmManager] Fin cascade pour "${params.english}" : ${detailedError}`);
+    return { sentence: undefined, source: undefined, error: detailedError };
   }
 }
 

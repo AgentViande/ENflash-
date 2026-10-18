@@ -199,17 +199,32 @@ export interface SentenceQueueItem {
   attempts: number;
   createdAt: string;
   error?: string;
+  source?: ExampleSourceType;
+  generatedSentence?: string;
 }
 
 export interface SentenceQueueStats {
   total: number;
   pending: number;
   completed: number;
+  failed: number;
   isProcessing: boolean;
   isPaused: boolean;
   currentWord?: string;
   estimatedRemainingSec?: number;
+  lastError?: string;
+  items?: SentenceQueueItem[];
 }
+
+export type CentreIATab =
+  | 'overview'
+  | 'voice'
+  | 'sentences'
+  | 'local_model'
+  | 'api_key'
+  | 'queue'
+  | 'cache'
+  | 'privacy';
 
 export interface SentenceQualityResult {
   isValid: boolean;
@@ -247,6 +262,7 @@ export interface AppSettings {
   localLlmModel?: LocalLlmModelType;
   aiApiKey?: string;
   aiApiEndpoint?: string;
+  sentenceRequestsPerMinute?: number;
 }
 
 export interface AppDatabase {

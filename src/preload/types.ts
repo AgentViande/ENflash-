@@ -10,8 +10,11 @@ import {
   SystemHardwareInfo,
   SpeedTestResult,
   SentenceQueueStats,
+  SentenceQueueItem,
   ExampleSourceType,
 } from '../shared/types';
+
+export type { AudioEngineStatus };
 
 export interface UpdateInfo {
   version: string;
@@ -100,7 +103,8 @@ export interface ElectronAPI {
     localLlmModel?: LocalLlmModelType;
     aiApiKey?: string;
     aiApiEndpoint?: string;
-  }) => Promise<{ sentence: string; source: ExampleSourceType } | null>;
+    skipSentence?: string;
+  }) => Promise<{ sentence?: string; source?: ExampleSourceType; error?: string } | null>;
 
   // File d'attente des phrases
   enqueueSentence: (params: {
@@ -113,9 +117,12 @@ export interface ElectronAPI {
   }) => Promise<boolean>;
   enqueueMissingSentences: (words: Array<{ id: string; english: string; french: string; example?: string }>) => Promise<number>;
   getSentenceQueueStats: () => Promise<SentenceQueueStats>;
+  getSentenceQueueItems: () => Promise<SentenceQueueItem[]>;
   pauseSentenceQueue: () => Promise<boolean>;
   resumeSentenceQueue: () => Promise<boolean>;
   cancelSentenceQueue: () => Promise<boolean>;
+  clearSentenceQueue: () => Promise<boolean>;
+  retryFailedSentences: () => Promise<number>;
   setSentenceSessionActive: (isActive: boolean) => Promise<boolean>;
 
   // Événements LLM & Phrases

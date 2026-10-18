@@ -11,6 +11,7 @@ import {
   DailyTestResultItem,
   SentenceQueueStats,
   ExampleSourceType,
+  CentreIATab,
 } from '../../../shared/types';
 import { calculateLevel } from '../../../shared/constants';
 import { applyReviewResult } from '../../../shared/srs/leitner';
@@ -85,6 +86,12 @@ interface AppContextType {
   deleteWordSentence: (wordId: string) => Promise<void>;
   generateMissingSentences: () => Promise<number>;
   setSentenceSessionActive: (isActive: boolean) => Promise<void>;
+  // Centre IA & Navigation
+  centreIaTab: CentreIATab | null;
+  openCentreIA: (tab?: CentreIATab) => void;
+  closeCentreIA: () => void;
+  navigationTabRequest: string | null;
+  clearNavigationTabRequest: () => void;
   // Rechargement base
   refreshDatabase: () => Promise<void>;
 }
@@ -99,6 +106,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [currentDayKey, setCurrentDayKey] = useState<string>(() => getParisDayKey());
   const [currentWeekKey, setCurrentWeekKey] = useState<string>(() => getParisWeekKey());
   const [sentenceQueueStats, setSentenceQueueStats] = useState<SentenceQueueStats | null>(null);
+  const [centreIaTab, setCentreIaTab] = useState<CentreIATab | null>(null);
+  const [navigationTabRequest, setNavigationTabRequest] = useState<string | null>(null);
+
+  const openCentreIA = useCallback((tab?: CentreIATab) => {
+    setCentreIaTab(tab || 'overview');
+    setNavigationTabRequest('parametres');
+  }, []);
+
+  const closeCentreIA = useCallback(() => {
+    setCentreIaTab(null);
+  }, []);
+
+  const clearNavigationTabRequest = useCallback(() => {
+    setNavigationTabRequest(null);
+  }, []);
 
   // Charger la base de données au montage
   const refreshDatabase = useCallback(async () => {
@@ -759,6 +781,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteWordSentence,
         generateMissingSentences,
         setSentenceSessionActive,
+        centreIaTab,
+        openCentreIA,
+        closeCentreIA,
+        navigationTabRequest,
+        clearNavigationTabRequest,
         refreshDatabase,
       }}
     >

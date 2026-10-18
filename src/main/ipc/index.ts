@@ -358,6 +358,10 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return sentenceQueue.getStats();
   });
 
+  ipcMain.handle('sentence:getItems', async () => {
+    return sentenceQueue.getItems();
+  });
+
   ipcMain.handle('sentence:pause', async () => {
     sentenceQueue.pause();
     return true;
@@ -371,6 +375,15 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   ipcMain.handle('sentence:cancel', async () => {
     sentenceQueue.cancel();
     return true;
+  });
+
+  ipcMain.handle('sentence:clear', async () => {
+    sentenceQueue.clearQueue();
+    return true;
+  });
+
+  ipcMain.handle('sentence:retryFailed', async () => {
+    return sentenceQueue.retryFailed();
   });
 
   ipcMain.handle('sentence:setSessionActive', async (_event, isActive: boolean) => {

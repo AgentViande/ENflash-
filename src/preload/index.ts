@@ -66,9 +66,12 @@ const api: ElectronAPI = {
   enqueueSentence: (params) => ipcRenderer.invoke('sentence:enqueue', params),
   enqueueMissingSentences: (words) => ipcRenderer.invoke('sentence:enqueueMissing', words),
   getSentenceQueueStats: () => ipcRenderer.invoke('sentence:getStats'),
+  getSentenceQueueItems: () => ipcRenderer.invoke('sentence:getItems'),
   pauseSentenceQueue: () => ipcRenderer.invoke('sentence:pause'),
   resumeSentenceQueue: () => ipcRenderer.invoke('sentence:resume'),
   cancelSentenceQueue: () => ipcRenderer.invoke('sentence:cancel'),
+  clearSentenceQueue: () => ipcRenderer.invoke('sentence:clear'),
+  retryFailedSentences: () => ipcRenderer.invoke('sentence:retryFailed'),
   setSentenceSessionActive: (isActive) => ipcRenderer.invoke('sentence:setSessionActive', isActive),
 
   // Événements LLM & Phrases
