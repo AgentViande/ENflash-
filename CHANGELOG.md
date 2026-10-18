@@ -1,5 +1,26 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.1.2] - 2026-10-18
+
+### 🚀 Nouveautés & ✨ Améliorations
+- **Zéro latence audio & Réchauffement au démarrage (Warmup ONNX)** :
+  - **Préchauffage immédiat en arrière-plan** : le modèle neuronal Kokoro-82M est désormais initialisé et "réchauffé" dès le lancement de l'application via une courte inférence factice hors du thread UI. Le premier clic sur une carte bénéficie d'une lecture instantanée sans cold-start.
+  - **Génération anticipée continue** : à l'ajout ou la modification d'un mot, sa prononciation et son exemple sont automatiquement synthétisés en tâche de fond.
+  - **File d'attente d'arrière-plan sécurisée** : au premier lancement et après vidage du cache, les mots du vocabulaire sont synthétisés à cadence douce (200 ms d'espacement) sans bloquer les animations ni le processeur.
+  - **Suivi visuel de progression** : badge discret dans les Paramètres affichant l'état de la génération anticipée (*« Génération en arrière-plan : X / Y audios prêts »*) avec bouton d'arrêt instantané.
+- **Cache audio persistant v2 & Indexation O(1)** :
+  - **Index JSON instantané (`cache_index.json`)** : mémorisation des clés de cache en RAM pour une vérification immédiate sans scan du disque dur.
+  - **Écritures atomiques** : écriture sur fichier temporaire `.tmp` puis renommage instantané pour éliminer tout risque de fichier corrompu en cas de fermeture inopinée.
+  - **Nettoyage automatique au démarrage** : détection et suppression des fichiers temporaires résiduels, des fichiers corrompus (< 44 octets) et purge automatique des anciennes versions de cache.
+- **Gestionnaire du cache dans Paramètres > Voix** :
+  - Affichage précis en temps réel du volume utilisé (*ex : 312 audios • 18 Mo*).
+  - **Bouton « Supprimer le cache audio » avec modale de confirmation** :
+    - Fenêtre de confirmation dédiée avec rappel de sécurité (ne supprime jamais le modèle Kokoro, ni vos mots, playlists, XP ou streak).
+    - Option cochée par défaut : *« Régénérer ensuite en arrière-plan »*.
+    - Arrêt propre et immédiat du son en cours de lecture et de la file de génération.
+    - Gestion robuste des verrous de fichiers sous Windows (tentatives répétées sur `EBUSY`/`EPERM`).
+  - **Bouton « Ouvrir le dossier du cache »** : accès direct au répertoire `audio_cache` dans l'explorateur Windows.
+
 ## [v1.1.1] - 2026-10-18
 
 ### 🐛 Corrections
