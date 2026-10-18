@@ -1,5 +1,30 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.0.4] - 2026-10-18
+
+### 🚀 Nouveautés & ✨ Améliorations
+- **Architecture audio de prononciation en cascade (4 niveaux)** :
+  1. *Cache local disque* : rejeu instantané des fichiers audio déjà générés ou téléchargés sans latence ni consommation réseau.
+  2. *Voix neuronale hors ligne locale (Piper TTS)* : intégration de 4 modèles de voix de haute qualité (US Lessac féminin, US Ryan masculin, UK Alba féminin, UK Alan masculin) téléchargeables à la demande depuis les Paramètres pour garder l'installateur léger.
+  3. *Enregistrements humains réels* : interrogation automatique de l'API gratuite Free Dictionary API pour les mots isolés (accent UK et US) avec mise en cache locale.
+  4. *Voix système naturelle en dernier recours* : sélection intelligente de la meilleure voix anglaise installée (filtre exclusif sur les voix "Natural", "Neural", "Premium", interdisant toute voix non anglaise).
+- **Contrôles audio enrichis sur les cartes** :
+  - Bouton d'écoute audio sur chaque flashcard, dans les tests et dans l'évaluation hebdomadaire (révélé après validation de la réponse).
+  - Bouton dédié pour écouter la **phrase d'exemple** en contexte.
+  - Mode **ralenti (0.7x)** activable d'un clic sur la carte pour décomposer l'élocution.
+  - Raccourci clavier <kbd>P</kbd> pour réécouter instantanément la prononciation.
+  - Option de lecture automatique à l'affichage des faces en anglais.
+  - Préchargement transparent en tâche de fond des audios des cartes du jour.
+- **Badges de niveau évolutifs (8 paliers vectoriels)** :
+  - Paliers Débutant (1-4), Bronze (5-9), Argent (10-14), Or (15-19), Platine (20-29), Diamant (30-39), Maître (40-49) et Légende (50+).
+  - Designs SVG originaux avec palette, ornements, auras et reflets dédiés.
+  - Système de sous-progression de 1 à 4 étoiles au sein de chaque rang.
+  - Intégration dans le header compact, grande carte de niveau sur l'accueil, et **Galerie des 8 rangs** sur la page Progression avec silhouettes pour les rangs verrouillés.
+  - Modale de félicitations au passage de niveau avec confettis et animation spéciale d'évolution de rang (morphing).
+- **Paramètres & Transparence des licences** :
+  - Tableau de bord des voix avec prévisualisation, jauges de progression de téléchargement et gestion de l'espace disque du cache.
+  - Section *Crédits et licences libres* (Piper MIT, Rhasspy ODbL/Public Domain, Free Dictionary API CC-BY-SA, Web Audio procédurale).
+
 ## [v1.0.3] - 2026-10-18
 
 ### 🚀 Nouveautés & ✨ Améliorations
