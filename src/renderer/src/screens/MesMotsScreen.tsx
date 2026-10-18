@@ -12,17 +12,18 @@ import {
   CheckCircle2,
   Sparkles,
   X,
+  RotateCw,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { Word, LeitnerBox } from '../../../shared/types';
-import { speakWord } from '../utils/audio';
+import { Word, LeitnerBox, ExampleSourceType } from '../../../shared/types';
+import { speakWord, speakText } from '../utils/audio';
 
 interface MesMotsScreenProps {
   onOpenQuickAdd: () => void;
 }
 
 export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) => {
-  const { db, updateWord, deleteWord, addWord, refreshDatabase } = useApp();
+  const { db, updateWord, deleteWord, addWord, refreshDatabase, regenerateWordSentence } = useApp();
 
   const [search, setSearch] = useState('');
   const [selectedStatus, setSelectedStatus] = useState<'all' | 'new' | 'learning' | 'mastered'>('all');
@@ -36,6 +37,10 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
   const [editFrench, setEditFrench] = useState('');
   const [editEnglish, setEditEnglish] = useState('');
   const [editExample, setEditExample] = useState('');
+  const [editExampleSource, setEditExampleSource] = useState<ExampleSourceType | undefined>(undefined);
+  const [isGeneratingEditExample, setIsGeneratingEditExample] = useState(false);
+  const [isPlayingEditAudio, setIsPlayingEditAudio] = useState(false);
+  const [generatingWordId, setGeneratingWordId] = useState<string | null>(null);
   const [editTags, setEditTags] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editBox, setEditBox] = useState<LeitnerBox>(1);
@@ -85,9 +90,77 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     setEditFrench(w.french);
     setEditEnglish(w.english);
     setEditExample(w.example || '');
+    setEditExampleSource(w.exampleSource);
     setEditTags((w.tags || []).join(', '));
     setEditNote(w.note || '');
     setEditBox(w.leitnerBox);
+  };
+
+  const handleGenerateEditExample = async () => {
+    if (!editEnglish.trim() || isGeneratingEditExample) return;
+    setIsGeneratingEditExample(true);
+    try {
+      if (window.api?.resolveSentenceCascade) {
+        const res = await window.api.resolveSentenceCascade({
+          english: editEnglish.trim(),
+          french: editFrench.trim(),
+          existingExample: editExample.trim(),
+          cascadeOrder: db?.settings.exampleCascadeOrder,
+          localLlmEnabled: db?.settings.localLlmEnabled,
+          localLlmModel: db?.settings.localLlmModel,
+          aiApiKey: db?.settings.aiApiKey,
+          aiApiEndpoint: db?.settings.aiApiEndpoint,
+        });
+
+        if (res && res.sentence) {
+          setEditExample(res.sentence);
+          setEditExampleSource(res.source);
+        } else if (window.api?.generateSentence) {
+          const direct = await window.api.generateSentence({
+            english: editEnglish.trim(),
+            french: editFrench.trim(),
+            modelType: db?.settings.localLlmModel || 'standard',
+          });
+          if (direct && direct.success && direct.sentence) {
+            setEditExample(direct.sentence);
+            setEditExampleSource('local_llm');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erreur génération exemple edit:', err);
+    } finally {
+      setIsGeneratingEditExample(false);
+    }
+  };
+
+  const handlePlayEditExample = async () => {
+    if (!editExample.trim() || isPlayingEditAudio) return;
+    setIsPlayingEditAudio(true);
+    try {
+      await speakText(editExample.trim(), {
+        accent: db?.settings.voiceAccent,
+        preferredVoiceId: db?.settings.preferredVoiceId,
+        speed: db?.settings.voiceSpeed || 1.0,
+        volume: db?.settings.voiceVolume ?? 0.8,
+      });
+    } catch (err) {
+      console.error('Erreur lecture audio:', err);
+    } finally {
+      setIsPlayingEditAudio(false);
+    }
+  };
+
+  const handleRegenerateRowSentence = async (wordId: string) => {
+    if (generatingWordId) return;
+    setGeneratingWordId(wordId);
+    try {
+      await regenerateWordSentence(wordId);
+    } catch (err) {
+      console.error('Erreur régénération exemple:', err);
+    } finally {
+      setTimeout(() => setGeneratingWordId(null), 1200);
+    }
   };
 
   const handleSaveEdit = async () => {
@@ -98,11 +171,13 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
+    const hasExample = Boolean(editExample && editExample.trim());
     await updateWord({
       ...editingWord,
       french: editFrench.trim(),
       english: editEnglish.trim(),
       example: editExample.trim(),
+      exampleSource: hasExample ? (editExampleSource || 'user') : undefined,
       tags,
       note: editNote.trim(),
       leitnerBox: editBox,
@@ -391,10 +466,126 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                   >
                     {/* Français */}
                     <td style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--text-primary)' }}>
-                      {w.french}
-                      {w.example && (
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 400, marginTop: '2px' }}>
-                          "{w.example}"
+                      <div>{w.french}</div>
+                      {w.example ? (
+                        <div
+                          style={{
+                            fontSize: '0.78rem',
+                            color: 'var(--text-secondary)',
+                            fontWeight: 400,
+                            marginTop: '4px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            flexWrap: 'wrap',
+                            gap: '6px',
+                          }}
+                        >
+                          <span style={{ fontStyle: 'italic' }}>« {w.example} »</span>
+                          {w.exampleSource && (
+                            <span
+                              style={{
+                                fontSize: '0.68rem',
+                                fontWeight: 700,
+                                padding: '1px 5px',
+                                borderRadius: '3px',
+                                backgroundColor:
+                                  w.exampleSource === 'local_llm'
+                                    ? 'rgba(99, 102, 241, 0.15)'
+                                    : w.exampleSource === 'dictionary'
+                                    ? 'rgba(16, 185, 129, 0.15)'
+                                    : w.exampleSource === 'api'
+                                    ? 'rgba(6, 182, 212, 0.15)'
+                                    : 'rgba(245, 158, 11, 0.15)',
+                                color:
+                                  w.exampleSource === 'local_llm'
+                                    ? 'var(--color-primary)'
+                                    : w.exampleSource === 'dictionary'
+                                    ? '#10b981'
+                                    : w.exampleSource === 'api'
+                                    ? '#06b6d4'
+                                    : '#f59e0b',
+                              }}
+                            >
+                              {w.exampleSource === 'local_llm'
+                                ? '🤖 IA locale'
+                                : w.exampleSource === 'dictionary'
+                                ? '📖 Dictionnaire'
+                                : w.exampleSource === 'api'
+                                ? '✨ IA'
+                                : '✍️ Ma phrase'}
+                            </span>
+                          )}
+
+                          <button
+                            onClick={() =>
+                              speakText(w.example!, {
+                                accent: db.settings.voiceAccent,
+                                preferredVoiceId: db.settings.preferredVoiceId,
+                                speed: db.settings.voiceSpeed || 1.0,
+                              })
+                            }
+                            title="Écouter la phrase d'exemple"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: 'pointer',
+                              padding: '2px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Volume2 size={12} />
+                          </button>
+
+                          <button
+                            onClick={() => handleRegenerateRowSentence(w.id)}
+                            disabled={generatingWordId === w.id}
+                            title="Régénérer cette phrase avec l'IA"
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              cursor: generatingWordId === w.id ? 'not-allowed' : 'pointer',
+                              padding: '2px',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <RotateCw size={12} className={generatingWordId === w.id ? 'animate-spin' : ''} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: '4px' }}>
+                          <button
+                            onClick={() => handleRegenerateRowSentence(w.id)}
+                            disabled={generatingWordId === w.id}
+                            style={{
+                              background: 'rgba(99, 102, 241, 0.1)',
+                              border: '1px solid rgba(99, 102, 241, 0.3)',
+                              color: 'var(--color-primary)',
+                              borderRadius: 'var(--radius-sm)',
+                              padding: '2px 8px',
+                              fontSize: '0.72rem',
+                              fontWeight: 700,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: generatingWordId === w.id ? 'not-allowed' : 'pointer',
+                            }}
+                          >
+                            {generatingWordId === w.id ? (
+                              <>
+                                <RotateCw size={11} className="animate-spin" />
+                                <span>Génération IA...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Sparkles size={11} />
+                                <span>+ Générer un exemple (IA)</span>
+                              </>
+                            )}
+                          </button>
                         </div>
                       )}
                     </td>
@@ -570,13 +761,115 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '4px' }}>
-                  Phrase d'exemple
-                </label>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <label style={{ fontSize: '0.8rem', fontWeight: 700 }}>
+                      Phrase d'exemple
+                    </label>
+                    {editExampleSource && (
+                      <span
+                        style={{
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: '4px',
+                          backgroundColor:
+                            editExampleSource === 'local_llm'
+                              ? 'rgba(99, 102, 241, 0.15)'
+                              : editExampleSource === 'dictionary'
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : editExampleSource === 'api'
+                              ? 'rgba(6, 182, 212, 0.15)'
+                              : 'rgba(245, 158, 11, 0.15)',
+                          color:
+                            editExampleSource === 'local_llm'
+                              ? 'var(--color-primary)'
+                              : editExampleSource === 'dictionary'
+                              ? '#10b981'
+                              : editExampleSource === 'api'
+                              ? '#06b6d4'
+                              : '#f59e0b',
+                        }}
+                      >
+                        {editExampleSource === 'local_llm'
+                          ? '🤖 IA locale (Qwen2.5)'
+                          : editExampleSource === 'dictionary'
+                          ? '📖 Dictionnaire'
+                          : editExampleSource === 'api'
+                          ? '✨ IA (API)'
+                          : '✍️ Ma phrase'}
+                      </span>
+                    )}
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    {editExample.trim() && (
+                      <button
+                        type="button"
+                        onClick={handlePlayEditExample}
+                        disabled={isPlayingEditAudio}
+                        title="Écouter la phrase d'exemple"
+                        style={{
+                          background: 'var(--bg-secondary)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-secondary)',
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          fontSize: '0.75rem',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <Volume2 size={13} />
+                        <span>Écouter</span>
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={handleGenerateEditExample}
+                      disabled={!editEnglish.trim() || isGeneratingEditExample}
+                      title="Générer automatiquement avec l'IA"
+                      style={{
+                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.22))',
+                        border: '1px solid var(--color-primary)',
+                        color: 'var(--color-primary)',
+                        padding: '3px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.78rem',
+                        fontWeight: 700,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        cursor: !editEnglish.trim() || isGeneratingEditExample ? 'not-allowed' : 'pointer',
+                        opacity: !editEnglish.trim() || isGeneratingEditExample ? 0.6 : 1,
+                      }}
+                    >
+                      {isGeneratingEditExample ? (
+                        <>
+                          <RotateCw size={13} className="animate-spin" />
+                          <span>Génération IA...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles size={13} />
+                          <span>{editExample.trim() ? "Régénérer avec l'IA" : "Générer avec l'IA"}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+
                 <input
                   type="text"
                   value={editExample}
-                  onChange={(e) => setEditExample(e.target.value)}
+                  onChange={(e) => {
+                    setEditExample(e.target.value);
+                    setEditExampleSource('user');
+                  }}
+                  placeholder="Ex : The aircraft climbed smoothly. (ou cliquez sur Générer avec l'IA)"
                   style={{ width: '100%' }}
                 />
               </div>

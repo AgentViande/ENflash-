@@ -53,6 +53,7 @@ interface AppContextType {
     french: string;
     english: string;
     example?: string;
+    exampleSource?: ExampleSourceType;
     tags?: string[];
     note?: string;
   }, forceDuplicate?: boolean) => Promise<AddWordResult>;
@@ -363,7 +364,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // 1. Ajouter un mot
   const addWord = useCallback(
     async (
-      wordData: { french: string; english: string; example?: string; tags?: string[]; note?: string },
+      wordData: {
+        french: string;
+        english: string;
+        example?: string;
+        exampleSource?: ExampleSourceType;
+        tags?: string[];
+        note?: string;
+      },
       forceDuplicate: boolean = false
     ): Promise<AddWordResult> => {
       if (!db) return { success: false };
@@ -381,13 +389,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const today = getParisDayKey();
-      const hasUserExample = Boolean(wordData.example && wordData.example.trim());
+      const hasExample = Boolean(wordData.example && wordData.example.trim());
       const newWord: Word = {
         id: 'w_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         french: wordData.french.trim(),
         english: wordData.english.trim(),
         example: wordData.example?.trim() || '',
-        exampleSource: hasUserExample ? 'user' : undefined,
+        exampleSource: hasExample ? (wordData.exampleSource || 'user') : undefined,
         tags: wordData.tags || [],
         note: wordData.note?.trim() || '',
         leitnerBox: 1,
@@ -414,7 +422,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       playSfx('success');
 
       // Si aucune phrase d'exemple n'a été saisie, enfiler pour génération automatique en arrière-plan
-      if (!hasUserExample && window.api?.enqueueSentence) {
+      if (!hasExample && window.api?.enqueueSentence) {
         window.api
           .enqueueSentence({
             wordId: newWord.id,

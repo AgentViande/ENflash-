@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Plus, AlertTriangle, Check, Sparkles } from 'lucide-react';
+import { X, Plus, AlertTriangle, Check, Sparkles, Volume2, RotateCw } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { Word } from '../../../shared/types';
+import { Word, ExampleSourceType } from '../../../shared/types';
+import { speakText } from '../utils/audio';
 
 interface QuickAddModalProps {
   isOpen: boolean;
@@ -14,6 +15,9 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
   const [french, setFrench] = useState('');
   const [english, setEnglish] = useState('');
   const [example, setExample] = useState('');
+  const [exampleSource, setExampleSource] = useState<ExampleSourceType | undefined>(undefined);
+  const [isGeneratingExample, setIsGeneratingExample] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [tagsInput, setTagsInput] = useState('');
   const [note, setNote] = useState('');
   const [chainMode, setChainMode] = useState(true);
@@ -53,6 +57,63 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     setDuplicateWarning(found || null);
   }, [french, english, db]);
 
+  // Générer une phrase d'exemple en direct avec l'IA
+  const handleGenerateExample = async () => {
+    if (!english.trim() || isGeneratingExample) return;
+    setIsGeneratingExample(true);
+    try {
+      if (window.api?.resolveSentenceCascade) {
+        const res = await window.api.resolveSentenceCascade({
+          english: english.trim(),
+          french: french.trim(),
+          existingExample: example.trim(),
+          cascadeOrder: db?.settings.exampleCascadeOrder,
+          localLlmEnabled: db?.settings.localLlmEnabled,
+          localLlmModel: db?.settings.localLlmModel,
+          aiApiKey: db?.settings.aiApiKey,
+          aiApiEndpoint: db?.settings.aiApiEndpoint,
+        });
+
+        if (res && res.sentence) {
+          setExample(res.sentence);
+          setExampleSource(res.source);
+        } else if (window.api?.generateSentence) {
+          const direct = await window.api.generateSentence({
+            english: english.trim(),
+            french: french.trim(),
+            modelType: db?.settings.localLlmModel || 'standard',
+          });
+          if (direct && direct.success && direct.sentence) {
+            setExample(direct.sentence);
+            setExampleSource('local_llm');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Erreur génération exemple:', err);
+    } finally {
+      setIsGeneratingExample(false);
+    }
+  };
+
+  // Écouter la phrase d'exemple avec Kokoro
+  const handlePlayExample = async () => {
+    if (!example.trim() || isPlayingAudio) return;
+    setIsPlayingAudio(true);
+    try {
+      await speakText(example.trim(), {
+        accent: db?.settings.voiceAccent,
+        preferredVoiceId: db?.settings.preferredVoiceId,
+        speed: db?.settings.voiceSpeed || 1.0,
+        volume: db?.settings.voiceVolume ?? 0.8,
+      });
+    } catch (err) {
+      console.error('Erreur lecture audio:', err);
+    } finally {
+      setIsPlayingAudio(false);
+    }
+  };
+
   if (!isOpen) return null;
 
   const handleSubmit = async (force: boolean = false) => {
@@ -68,6 +129,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
         french,
         english,
         example,
+        exampleSource,
         tags,
         note,
       },
@@ -86,6 +148,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
     setFrench('');
     setEnglish('');
     setExample('');
+    setExampleSource(undefined);
     setNote('');
     setDuplicateWarning(null);
 
@@ -269,16 +332,136 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           </div>
 
           <div>
-            <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, marginBottom: '6px', color: 'var(--text-secondary)' }}>
-              Phrase d'exemple (optionnelle)
-            </label>
-            <input
-              type="text"
-              value={example}
-              onChange={(e) => setExample(e.target.value)}
-              placeholder="Ex : An apple a day keeps the doctor away."
-              style={{ width: '100%' }}
-            />
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <label style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
+                  Phrase d'exemple (optionnelle)
+                </label>
+                {exampleSource && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      padding: '2px 7px',
+                      borderRadius: '4px',
+                      backgroundColor:
+                        exampleSource === 'local_llm'
+                          ? 'rgba(99, 102, 241, 0.15)'
+                          : exampleSource === 'dictionary'
+                          ? 'rgba(16, 185, 129, 0.15)'
+                          : exampleSource === 'api'
+                          ? 'rgba(6, 182, 212, 0.15)'
+                          : 'rgba(245, 158, 11, 0.15)',
+                      color:
+                        exampleSource === 'local_llm'
+                          ? 'var(--color-primary)'
+                          : exampleSource === 'dictionary'
+                          ? '#10b981'
+                          : exampleSource === 'api'
+                          ? '#06b6d4'
+                          : '#f59e0b',
+                    }}
+                  >
+                    {exampleSource === 'local_llm'
+                      ? '🤖 IA locale (Qwen2.5)'
+                      : exampleSource === 'dictionary'
+                      ? '📖 Dictionnaire'
+                      : exampleSource === 'api'
+                      ? '✨ IA (API)'
+                      : '✍️ Ma phrase'}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {example.trim() && (
+                  <button
+                    type="button"
+                    onClick={handlePlayExample}
+                    disabled={isPlayingAudio}
+                    title="Écouter la phrase d'exemple"
+                    style={{
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-secondary)',
+                      padding: '4px 8px',
+                      borderRadius: 'var(--radius-sm)',
+                      fontSize: '0.75rem',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Volume2 size={13} />
+                    <span>Écouter</span>
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleGenerateExample}
+                  disabled={!english.trim() || isGeneratingExample}
+                  title={
+                    !english.trim()
+                      ? "Saisissez d'abord le mot en anglais pour générer une phrase"
+                      : "Générer automatiquement une phrase d'exemple avec l'IA"
+                  }
+                  style={{
+                    background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(139, 92, 246, 0.22))',
+                    border: '1px solid var(--color-primary)',
+                    color: 'var(--color-primary)',
+                    padding: '4px 10px',
+                    borderRadius: 'var(--radius-sm)',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '5px',
+                    cursor: !english.trim() || isGeneratingExample ? 'not-allowed' : 'pointer',
+                    opacity: !english.trim() || isGeneratingExample ? 0.6 : 1,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {isGeneratingExample ? (
+                    <>
+                      <RotateCw size={13} className="animate-spin" />
+                      <span>Génération IA...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={13} />
+                      <span>{example.trim() ? "Régénérer avec l'IA" : "Générer avec l'IA"}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                value={example}
+                onChange={(e) => {
+                  setExample(e.target.value);
+                  setExampleSource('user');
+                }}
+                placeholder="Ex : The aircraft climbed into clear skies. (ou cliquez sur Générer avec l'IA)"
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
+              {!example.trim() ? (
+                <>
+                  💡 <em>Laissez vide pour générer automatiquement via l'IA locale (Qwen2.5) en tâche de fond.</em>
+                </>
+              ) : (
+                <>
+                  ✏️ <em>Vous pouvez retoucher librement cette phrase ou cliquer sur Régénérer.</em>
+                </>
+              )}
+            </p>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
