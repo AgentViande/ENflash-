@@ -1,5 +1,11 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.3.0] - 2026-10-18
+
+### 🚀 Nouveautés
+- feat(ai): centre IA dedie, bouton phrase instantane et correctif file de generation
+- feat(ui): bouton de generation d'exemple IA direct, previsualisation audio et badges de source dans l'ajout et l'edition de mots
+
 ## [v1.2.0] - 2026-10-18
 
 ### 🚀 Nouveautés & ✨ Améliorations
