@@ -975,45 +975,23 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
                           "{currentCard.example}"
                         </p>
 
-                        {/* Badge de source de la phrase */}
-                        {currentCard.exampleSource === 'local_llm' && (
+                        {(currentCard.exampleSource === 'api' || currentCard.exampleSource === 'local_llm') && (
                           <span
-                            title="Phrase générée hors ligne par le modèle local"
+                            title="Phrase générée par l'intelligence artificielle"
                             style={{
                               display: 'inline-flex',
                               alignItems: 'center',
                               gap: '4px',
                               fontSize: '0.68rem',
                               fontWeight: 800,
-                              backgroundColor: 'rgba(99, 102, 241, 0.15)',
-                              color: 'var(--color-primary)',
-                              padding: '2px 8px',
-                              borderRadius: '999px',
-                              border: '1px solid rgba(99, 102, 241, 0.3)',
-                            }}
-                          >
-                            <Bot size={11} />
-                            <span>Générée par IA (locale)</span>
-                          </span>
-                        )}
-
-                        {currentCard.exampleSource === 'api' && (
-                          <span
-                            title="Phrase générée par l'API distante"
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              gap: '4px',
-                              fontSize: '0.68rem',
-                              fontWeight: 800,
-                              backgroundColor: 'rgba(236, 72, 153, 0.15)',
-                              color: '#ec4899',
+                              backgroundColor: 'rgba(6, 182, 212, 0.15)',
+                              color: '#06b6d4',
                               padding: '2px 8px',
                               borderRadius: '999px',
                             }}
                           >
                             <Sparkles size={11} />
-                            <span>IA</span>
+                            <span>Générée par IA</span>
                           </span>
                         )}
 

@@ -433,8 +433,6 @@ export class SentenceQueue {
         existingExample: wordInDb.example,
         existingSource: wordInDb.exampleSource,
         cascadeOrder: settings.exampleCascadeOrder,
-        localLlmEnabled: settings.localLlmEnabled,
-        localLlmModel: settings.localLlmModel,
         aiApiProvider: settings.aiApiProvider,
         aiApiKey: settings.aiApiKey,
         aiApiEndpoint: settings.aiApiEndpoint,
@@ -461,6 +459,7 @@ export class SentenceQueue {
           if (!win.isDestroyed()) {
             win.webContents.send('sentence:generated', {
               wordId: wordInDb.id,
+              english: wordInDb.english,
               sentence: result.sentence,
               source: result.source,
             });

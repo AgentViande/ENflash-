@@ -52,15 +52,12 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener('audio:preloadProgress', handler);
   },
 
-  // Modèle de langage local (LLM) & Phrases d'exemple
-  getLlmStatus: (modelType) => ipcRenderer.invoke('llm:getStatus', modelType),
-  getHardwareInfo: () => ipcRenderer.invoke('llm:getHardwareInfo'),
-  downloadLlmModel: (modelType) => ipcRenderer.invoke('llm:downloadModel', modelType),
-  cancelLlmDownload: () => ipcRenderer.invoke('llm:cancelDownload'),
-  deleteLlmModel: (modelType) => ipcRenderer.invoke('llm:deleteModel', modelType),
-  testLlmSpeed: (modelType) => ipcRenderer.invoke('llm:testSpeed', modelType),
-  preloadLlmModel: (modelType) => ipcRenderer.invoke('llm:preloadModel', modelType),
-  generateSentence: (params) => ipcRenderer.invoke('llm:generateSentence', params),
+  // Nettoyage de l'ancien modèle local (1.6 Go)
+  checkLocalModelCleanup: () => ipcRenderer.invoke('storage:checkLocalModelCleanup'),
+  deleteLocalModelFiles: () => ipcRenderer.invoke('storage:deleteLocalModelFiles'),
+  dismissLocalModelCleanup: () => ipcRenderer.invoke('storage:dismissLocalModelCleanup'),
+
+  // Phrases d'exemple & Clés API
   testAiApiKey: (params) => ipcRenderer.invoke('llm:testAiApiKey', params),
   testAiGeneration: (params) => ipcRenderer.invoke('llm:testAiGeneration', params),
   resolveSentenceCascade: (params) => ipcRenderer.invoke('llm:resolveCascade', params),
@@ -77,27 +74,6 @@ const api: ElectronAPI = {
   retryFailedSentences: () => ipcRenderer.invoke('sentence:retryFailed'),
   setSentenceSessionActive: (isActive) => ipcRenderer.invoke('sentence:setSessionActive', isActive),
 
-  // Événements LLM & Phrases
-  onLlmDownloadProgress: (callback) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('llm:downloadProgress', handler);
-    return () => ipcRenderer.removeListener('llm:downloadProgress', handler);
-  },
-  onLlmStatusUpdate: (callback) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('llm:statusUpdate', handler);
-    return () => ipcRenderer.removeListener('llm:statusUpdate', handler);
-  },
-  onLlmTokenChunk: (callback) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('llm:tokenChunk', handler);
-    return () => ipcRenderer.removeListener('llm:tokenChunk', handler);
-  },
-  onBackgroundSentenceReady: (callback) => {
-    const handler = (_event: any, data: any) => callback(data);
-    ipcRenderer.on('llm:backgroundSentenceReady', handler);
-    return () => ipcRenderer.removeListener('llm:backgroundSentenceReady', handler);
-  },
   onSentenceQueueProgress: (callback) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('sentence:queueProgress', handler);

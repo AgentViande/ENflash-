@@ -16,7 +16,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { Word, LeitnerBox, ExampleSourceType, LlmState } from '../../../shared/types';
+import { Word, LeitnerBox, ExampleSourceType } from '../../../shared/types';
 import { speakWord, speakText } from '../utils/audio';
 
 interface MesMotsScreenProps {
@@ -47,7 +47,6 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
   const [editTags, setEditTags] = useState('');
   const [editNote, setEditNote] = useState('');
   const [editBox, setEditBox] = useState<LeitnerBox>(1);
-  const [editLlmState, setEditLlmState] = useState<LlmState>('idle');
   const [editBackgroundOffer, setEditBackgroundOffer] = useState<{
     sentence: string;
     source?: ExampleSourceType;
@@ -55,37 +54,26 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
 
   const isCancelledEditRef = useRef<boolean>(false);
 
-  // Écoute des statuts LLM, streaming de tokens et phrases reçues en arrière-plan
+  // Écoute des phrases reçues en arrière-plan
   useEffect(() => {
     if (!editingWord) {
-      setEditLlmState('idle');
       setEditBackgroundOffer(null);
       return;
     }
 
-    const unsubStatus = window.api?.onLlmStatusUpdate?.((data) => {
-      setEditLlmState(data.state);
-    });
-
-    const unsubToken = window.api?.onLlmTokenChunk?.((data) => {
-      if (isGeneratingEditExample && data.fullText) {
-        setEditExample(data.fullText);
-        setEditExampleSource('local_llm');
-      }
-    });
-
-    const unsubBgReady = window.api?.onBackgroundSentenceReady?.((data) => {
-      if (data.english.trim().toLowerCase() === editEnglish.trim().toLowerCase()) {
+    const unsubBgReady = window.api?.onSentenceGenerated?.((data) => {
+      if (
+        data.wordId === editingWord.id ||
+        (data.english && data.english.trim().toLowerCase() === editEnglish.trim().toLowerCase())
+      ) {
         setEditBackgroundOffer({ sentence: data.sentence, source: data.source });
       }
     });
 
     return () => {
-      unsubStatus?.();
-      unsubToken?.();
       unsubBgReady?.();
     };
-  }, [editingWord, isGeneratingEditExample, editEnglish]);
+  }, [editingWord, editEnglish]);
 
   if (!db) return null;
 
@@ -138,10 +126,6 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
     setEditBox(w.leitnerBox);
     setEditGenerationError(null);
     setEditBackgroundOffer(null);
-    setEditLlmState('idle');
-    if (db?.settings?.localLlmEnabled && window.api?.preloadLlmModel) {
-      window.api.preloadLlmModel(db.settings.localLlmModel || 'standard').catch(() => {});
-    }
   };
 
   const handleGenerateEditExample = async (skipCurrent: boolean = false) => {
@@ -164,8 +148,6 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           existingExample: skipCurrent ? undefined : editExample.trim(),
           skipSentence: skipCurrent ? editExample.trim() : undefined,
           cascadeOrder: db?.settings.exampleCascadeOrder,
-          localLlmEnabled: db?.settings.localLlmEnabled,
-          localLlmModel: db?.settings.localLlmModel,
           aiApiProvider: db?.settings.aiApiProvider,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
@@ -190,14 +172,12 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
       }
     } finally {
       setIsGeneratingEditExample(false);
-      setEditLlmState('idle');
     }
   };
 
   const handleCancelEditGenerate = () => {
     isCancelledEditRef.current = true;
     setIsGeneratingEditExample(false);
-    setEditLlmState('idle');
   };
 
   const handlePlayEditExample = async () => {
@@ -235,8 +215,6 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
           existingExample: skipCurrent ? undefined : word.example,
           skipSentence: skipCurrent ? word.example : undefined,
           cascadeOrder: db?.settings.exampleCascadeOrder,
-          localLlmEnabled: db?.settings.localLlmEnabled,
-          localLlmModel: db?.settings.localLlmModel,
           aiApiProvider: db?.settings.aiApiProvider,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
@@ -599,28 +577,22 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                                 padding: '1px 5px',
                                 borderRadius: '3px',
                                 backgroundColor:
-                                  w.exampleSource === 'local_llm'
-                                    ? 'rgba(99, 102, 241, 0.15)'
-                                    : w.exampleSource === 'dictionary'
+                                  w.exampleSource === 'dictionary'
                                     ? 'rgba(16, 185, 129, 0.15)'
-                                    : w.exampleSource === 'api'
+                                    : w.exampleSource === 'api' || w.exampleSource === 'local_llm'
                                     ? 'rgba(6, 182, 212, 0.15)'
                                     : 'rgba(245, 158, 11, 0.15)',
                                 color:
-                                  w.exampleSource === 'local_llm'
-                                    ? 'var(--color-primary)'
-                                    : w.exampleSource === 'dictionary'
+                                  w.exampleSource === 'dictionary'
                                     ? '#10b981'
-                                    : w.exampleSource === 'api'
+                                    : w.exampleSource === 'api' || w.exampleSource === 'local_llm'
                                     ? '#06b6d4'
                                     : '#f59e0b',
                               }}
                             >
-                              {w.exampleSource === 'local_llm'
-                                ? '🤖 IA locale'
-                                : w.exampleSource === 'dictionary'
+                              {w.exampleSource === 'dictionary'
                                 ? '📖 Dictionnaire'
-                                : w.exampleSource === 'api'
+                                : w.exampleSource === 'api' || w.exampleSource === 'local_llm'
                                 ? '✨ IA'
                                 : '✍️ Ma phrase'}
                             </span>
@@ -714,9 +686,8 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                           <button
                             onClick={() =>
                               openCentreIA(
-                                rowGenerationError.error.toLowerCase().includes('local')
-                                  ? 'local_model'
-                                  : rowGenerationError.error.toLowerCase().includes('clé')
+                                rowGenerationError.error.toLowerCase().includes('clé') ||
+                                  rowGenerationError.error.toLowerCase().includes('api')
                                   ? 'api_key'
                                   : 'sentences'
                               )
@@ -991,11 +962,7 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       {isGeneratingEditExample ? (
                         <>
                           <RotateCw size={13} className="animate-spin" />
-                          <span>
-                            {editLlmState === 'loading_model'
-                              ? 'Chargement du modèle… (1ère fois)'
-                              : 'Génération...'}
-                          </span>
+                          <span>Génération en cours...</span>
                         </>
                       ) : (
                         <>
@@ -1089,7 +1056,7 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                           type="button"
                           onClick={() => {
                             setEditExample(editBackgroundOffer.sentence);
-                            setEditExampleSource(editBackgroundOffer.source || 'local_llm');
+                            setEditExampleSource(editBackgroundOffer.source || 'api');
                             setEditBackgroundOffer(null);
                           }}
                           style={{
@@ -1150,9 +1117,8 @@ export const MesMotsScreen: React.FC<MesMotsScreenProps> = ({ onOpenQuickAdd }) 
                       type="button"
                       onClick={() =>
                         openCentreIA(
-                          editGenerationError.toLowerCase().includes('local')
-                            ? 'local_model'
-                            : editGenerationError.toLowerCase().includes('clé')
+                          editGenerationError.toLowerCase().includes('clé') ||
+                            editGenerationError.toLowerCase().includes('api')
                             ? 'api_key'
                             : 'sentences'
                         )

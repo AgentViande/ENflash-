@@ -251,7 +251,7 @@ describe('File d’attente des phrases d’exemple (SentenceQueue)', () => {
   });
 
   it('gère les timeouts séparés : le chargement à froid ne déclenche jamais d’erreur de génération', () => {
-    const coldLoadDurationMs = 8400; // 8.4s pour charger le modèle Qwen 1.5B
+    const coldLoadDurationMs = 8400; // 8.4s pour charger un modèle ou un dictionnaire lourd
     const coldLoadTimeoutMs = 115000; // Jusqu'à 90s+
     const generationDurationMs = 850; // 0.85s de génération
     const generationTimeoutMs = 25000; // 20-25s

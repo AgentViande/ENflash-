@@ -28,43 +28,22 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
 
   const frenchInputRef = useRef<HTMLInputElement>(null);
   const isCancelledRef = useRef<boolean>(false);
-  const [llmState, setLlmState] = useState<'idle' | 'loading_model' | 'generating'>('idle');
   const [backgroundOffer, setBackgroundOffer] = useState<{ sentence: string; source: ExampleSourceType } | null>(null);
 
-  // Préchauffage du modèle local dès l'ouverture du modal si activé
-  useEffect(() => {
-    if (isOpen && db?.settings?.localLlmEnabled && window.api?.preloadLlmModel) {
-      window.api.preloadLlmModel(db.settings.localLlmModel || 'standard').catch(() => {});
-    }
-  }, [isOpen, db?.settings?.localLlmEnabled, db?.settings?.localLlmModel]);
-
-  // Écouteurs d'événements LLM en direct (statut de chargement, streaming, offre de phrase IA)
+  // Écoute des phrases générées en tâche de fond
   useEffect(() => {
     if (!isOpen) return;
 
-    const unsubStatus = window.api?.onLlmStatusUpdate?.((data) => {
-      setLlmState(data.state);
-    });
-
-    const unsubToken = window.api?.onLlmTokenChunk?.((data) => {
-      if (isGeneratingExample && data.fullText) {
-        setExample(data.fullText);
-        setExampleSource('local_llm');
-      }
-    });
-
-    const unsubBgReady = window.api?.onBackgroundSentenceReady?.((data) => {
-      if (data.english.trim().toLowerCase() === english.trim().toLowerCase()) {
+    const unsubBgReady = window.api?.onSentenceGenerated?.((data) => {
+      if (data.english && data.english.trim().toLowerCase() === english.trim().toLowerCase()) {
         setBackgroundOffer({ sentence: data.sentence, source: data.source });
       }
     });
 
     return () => {
-      unsubStatus?.();
-      unsubToken?.();
       unsubBgReady?.();
     };
-  }, [isOpen, isGeneratingExample, english]);
+  }, [isOpen, english]);
 
   // Focus automatique à l'ouverture
   useEffect(() => {
@@ -119,8 +98,6 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
           existingExample: skipCurrent ? undefined : example.trim(),
           skipSentence: skipCurrent ? example.trim() : undefined,
           cascadeOrder: db?.settings.exampleCascadeOrder,
-          localLlmEnabled: db?.settings.localLlmEnabled,
-          localLlmModel: db?.settings.localLlmModel,
           aiApiProvider: db?.settings.aiApiProvider,
           aiApiKey: db?.settings.aiApiKey,
           aiApiEndpoint: db?.settings.aiApiEndpoint,
@@ -146,14 +123,12 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
       }
     } finally {
       setIsGeneratingExample(false);
-      setLlmState('idle');
     }
   };
 
   const handleCancelGenerate = () => {
     isCancelledRef.current = true;
     setIsGeneratingExample(false);
-    setLlmState('idle');
   };
 
   // Écouter la phrase d'exemple avec Kokoro
@@ -474,12 +449,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                   {isGeneratingExample ? (
                     <>
                       <RotateCw size={13} className="animate-spin" />
-                      <span>
-                        {llmState === 'loading_model' ? 'Chargement du modèle…' : 'Génération…'}
-                      </span>
-                      {llmState === 'loading_model' && (
-                        <span style={{ fontSize: '0.68rem', opacity: 0.8 }}>(1ère fois)</span>
-                      )}
+                      <span>Génération en cours…</span>
                     </>
                   ) : (
                     <>
@@ -579,7 +549,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                     type="button"
                     onClick={() => {
                       setExample(backgroundOffer.sentence);
-                      setExampleSource('local_llm');
+                      setExampleSource(backgroundOffer.source || 'api');
                       setBackgroundOffer(null);
                     }}
                     style={{
@@ -634,7 +604,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
                   type="button"
                   onClick={() => {
                     onClose();
-                    openCentreIA('local_model');
+                    openCentreIA('api_key');
                   }}
                   style={{
                     backgroundColor: 'transparent',
@@ -655,7 +625,7 @@ export const QuickAddModal: React.FC<QuickAddModalProps> = ({ isOpen, onClose })
             <p style={{ margin: '4px 0 0', fontSize: '0.74rem', color: 'var(--text-muted)' }}>
               {!example.trim() ? (
                 <>
-                  💡 <em>Laissez vide pour générer automatiquement via l'IA locale (Qwen2.5) en tâche de fond.</em>
+                  💡 <em>Laissez vide pour générer automatiquement via le dictionnaire ou l'IA en tâche de fond.</em>
                 </>
               ) : (
                 <>

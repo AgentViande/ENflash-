@@ -158,47 +158,8 @@ export interface PiperVoiceModel {
   downloadProgress?: number;
 }
 
-export type ExampleSourceType = 'user' | 'dictionary' | 'local_llm' | 'api';
-export type LocalLlmModelType = 'standard' | 'light';
+export type ExampleSourceType = 'user' | 'dictionary' | 'api' | 'local_llm';
 export type AiApiProvider = 'gemini' | 'openai' | 'groq' | 'mistral' | 'openrouter' | 'custom';
-
-export interface LocalLlmStatus {
-  isEnabled: boolean;
-  modelType: LocalLlmModelType;
-  isInstalled: boolean;
-  isDownloading: boolean;
-  downloadProgress: number; // 0 à 100
-  downloadSpeed?: string;
-  downloadEta?: string;
-  isLoaded: boolean;
-  isGenerating: boolean;
-  modelSizeBytes: number;
-  modelSizeFormatted: string;
-  ramUsageMB?: number;
-  lastLoadedAt?: string;
-  lastGenerationDurationMs?: number;
-  averageGenerationDurationMs?: number;
-  recommendedModel?: LocalLlmModelType;
-  error?: string;
-}
-
-export type LlmState = 'idle' | 'loading_model' | 'generating';
-
-export interface LlmStatusEvent {
-  state: LlmState;
-  modelType?: LocalLlmModelType;
-  english?: string;
-  message?: string;
-}
-
-export interface SystemHardwareInfo {
-  totalRamGB: number;
-  freeRamGB: number;
-  cpuCores: number;
-  cpuModel: string;
-  ramTier: 'optimal' | 'warning' | 'insufficient'; // >=4Go optimal, 3-4Go warning, <3Go insufficient
-  recommendation: string;
-}
 
 export interface SentenceQueueItem {
   id: string;
@@ -233,7 +194,6 @@ export type CentreIATab =
   | 'overview'
   | 'voice'
   | 'sentences'
-  | 'local_model'
   | 'api_key'
   | 'queue'
   | 'cache'
@@ -243,15 +203,6 @@ export interface SentenceQualityResult {
   isValid: boolean;
   cleanSentence?: string;
   reason?: string;
-}
-
-export interface SpeedTestResult {
-  durationMs: number;
-  tokensPerSec: number;
-  ramUsageMB: number;
-  sentence: string;
-  rating: 'fast' | 'acceptable' | 'slow';
-  recommendation: string;
 }
 
 export interface AppSettings {
@@ -269,16 +220,15 @@ export interface AppSettings {
   autoCheckUpdates: boolean;
   lastSeenVersion: string;
 
-  // Phrases d'exemple & IA (locale & externe)
+  // Phrases d'exemple & IA (clé externe)
   exampleCascadeOrder?: ExampleSourceType[];
-  localLlmEnabled?: boolean;
-  localLlmModel?: LocalLlmModelType;
   aiApiProvider?: AiApiProvider;
   aiApiKey?: string;
   aiApiKeys?: Partial<Record<AiApiProvider, string>>;
   aiApiEndpoint?: string;
   aiApiModel?: string;
   sentenceRequestsPerMinute?: number;
+  dismissedLocalModelCleanupPrompt?: boolean;
 }
 
 export interface AppDatabase {

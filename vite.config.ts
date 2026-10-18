@@ -16,7 +16,6 @@ export default defineConfig({
               input: {
                 index: path.resolve(__dirname, 'src/main/index.ts'),
                 kokoroWorker: path.resolve(__dirname, 'src/main/audio/kokoroWorker.ts'),
-                llmWorker: path.resolve(__dirname, 'src/main/llm/llmWorker.ts'),
               },
               external: [
                 'electron',
@@ -24,7 +23,6 @@ export default defineConfig({
                 'kokoro-js',
                 '@huggingface/transformers',
                 'onnxruntime-node',
-                'node-llama-cpp',
               ],
             },
           },

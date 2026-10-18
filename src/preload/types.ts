@@ -5,14 +5,9 @@ import {
   VoiceAccent,
   AudioEngineStatus,
   AudioSourceType,
-  LocalLlmStatus,
-  LocalLlmModelType,
-  SystemHardwareInfo,
-  SpeedTestResult,
   SentenceQueueStats,
   SentenceQueueItem,
   ExampleSourceType,
-  LlmStatusEvent,
   AiApiProvider,
 } from '../shared/types';
 
@@ -81,21 +76,12 @@ export interface ElectronAPI {
   onKokoroProgress: (callback: (data: { progress: number; label: string }) => void) => () => void;
   onPreloadProgress?: (callback: (data: { isPreloading: boolean; completed: number; total: number; currentText?: string }) => void) => () => void;
 
-  // Modèle de langage local (LLM) & Phrases d'exemple
-  getLlmStatus: (modelType?: LocalLlmModelType) => Promise<LocalLlmStatus>;
-  getHardwareInfo: () => Promise<SystemHardwareInfo>;
-  downloadLlmModel: (modelType?: LocalLlmModelType) => Promise<{ success: boolean; error?: string }>;
-  cancelLlmDownload: () => Promise<boolean>;
-  deleteLlmModel: (modelType?: LocalLlmModelType) => Promise<boolean>;
-  testLlmSpeed: (modelType?: LocalLlmModelType) => Promise<SpeedTestResult>;
-  preloadLlmModel: (modelType?: LocalLlmModelType) => Promise<boolean>;
-  generateSentence: (params: {
-    english: string;
-    french: string;
-    definition?: string;
-    partOfSpeech?: string;
-    modelType?: LocalLlmModelType;
-  }) => Promise<{ success: boolean; sentence?: string; error?: string }>;
+  // Nettoyage de l'ancien modèle local (1.6 Go)
+  checkLocalModelCleanup: () => Promise<{ needsCleanup: boolean; sizeBytes: number; sizeFormatted: string }>;
+  deleteLocalModelFiles: () => Promise<{ success: boolean; freedBytes: number; freedFormatted: string }>;
+  dismissLocalModelCleanup: () => Promise<boolean>;
+
+  // Phrases d'exemple & Clés API
   testAiApiKey: (params: {
     provider?: AiApiProvider;
     apiKey: string;
@@ -113,8 +99,6 @@ export interface ElectronAPI {
     existingExample?: string;
     existingSource?: ExampleSourceType;
     cascadeOrder?: ExampleSourceType[];
-    localLlmEnabled?: boolean;
-    localLlmModel?: LocalLlmModelType;
     aiApiProvider?: AiApiProvider;
     aiApiKey?: string;
     aiApiEndpoint?: string;
@@ -126,9 +110,6 @@ export interface ElectronAPI {
     source?: ExampleSourceType;
     error?: string;
     durationMs?: number;
-    isSlow?: boolean;
-    recommendedModel?: LocalLlmModelType;
-    backgroundIaSentence?: string;
   } | null>;
 
   // File d'attente des phrases
@@ -150,13 +131,9 @@ export interface ElectronAPI {
   retryFailedSentences: () => Promise<number>;
   setSentenceSessionActive: (isActive: boolean) => Promise<boolean>;
 
-  // Événements LLM & Phrases
-  onLlmDownloadProgress?: (callback: (data: { modelType: LocalLlmModelType; progress: number; loadedBytes: number; totalBytes: number; speedFormatted?: string }) => void) => () => void;
-  onLlmStatusUpdate?: (callback: (data: LlmStatusEvent) => void) => () => void;
-  onLlmTokenChunk?: (callback: (data: { chunk: string; fullText: string }) => void) => () => void;
-  onBackgroundSentenceReady?: (callback: (data: { english: string; sentence: string; source: ExampleSourceType }) => void) => () => void;
+  // Événements Phrases & File d'attente
   onSentenceQueueProgress?: (callback: (stats: SentenceQueueStats) => void) => () => void;
-  onSentenceGenerated?: (callback: (data: { wordId: string; sentence: string; source: ExampleSourceType }) => void) => () => void;
+  onSentenceGenerated?: (callback: (data: { wordId: string; english?: string; sentence: string; source: ExampleSourceType }) => void) => () => void;
 
   // Rétro-compatibilité
   getVoicesStatus?: () => Promise<PiperVoiceModel[]>;

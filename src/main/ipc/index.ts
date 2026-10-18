@@ -6,7 +6,7 @@ import { sendDesktopNotification, startReminderScheduler } from '../notification
 import { getVoiceManager } from '../audio/voiceManager';
 import { getLlmManager } from '../llm/llmManager';
 import { getSentenceQueue } from '../llm/sentenceQueue';
-import { AppDatabase, Word, LocalLlmModelType, ExampleSourceType, AiApiProvider } from '../../shared/types';
+import { AppDatabase, Word, ExampleSourceType, AiApiProvider } from '../../shared/types';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const store = getDatabaseStore();
@@ -17,15 +17,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const initialData = store.load();
   if (initialData.settings?.dailyReminder) {
     startReminderScheduler(true, initialData.settings.dailyReminderTime);
-  }
-
-  // Préchauffage automatique du modèle local en tâche de fond au lancement de l'application
-  if (initialData.settings?.localLlmEnabled) {
-    setTimeout(() => {
-      llmManager.preloadModel(initialData.settings.localLlmModel || 'standard').catch((err) => {
-        console.warn('[LlmManager] Préchauffage automatique au lancement:', err);
-      });
-    }, 2500);
   }
 
   // --- Base de données ---
@@ -258,68 +249,38 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     return true;
   });
 
-  // --- Modèle de langage local (LLM) & Phrases d'exemple ---
+  // --- Phrases d'exemple & Clés API ---
   const llmManager = getLlmManager();
   const sentenceQueue = getSentenceQueue();
 
-  ipcMain.handle(
-    'llm:getStatus',
-    async (_event, modelType: LocalLlmModelType = 'standard') => {
-      return llmManager.getStatus(modelType);
+  // Nettoyage de l'ancien modèle local orphelin (1.6 Go)
+  ipcMain.handle('storage:checkLocalModelCleanup', async () => {
+    const db = store.load();
+    if (db.settings.dismissedLocalModelCleanupPrompt) {
+      return { needsCleanup: false, sizeBytes: 0, sizeFormatted: '0 Mo' };
     }
-  );
-
-  ipcMain.handle('llm:getHardwareInfo', async () => {
-    return llmManager.getHardwareInfo();
+    const check = llmManager.checkOrphanedLocalModel();
+    return {
+      needsCleanup: check.hasLocalModel,
+      sizeBytes: check.sizeBytes,
+      sizeFormatted: check.sizeFormatted,
+    };
   });
 
-  ipcMain.handle(
-    'llm:downloadModel',
-    async (_event, modelType: LocalLlmModelType = 'standard') => {
-      return llmManager.downloadModel(modelType);
-    }
-  );
-
-  ipcMain.handle('llm:cancelDownload', async () => {
-    return llmManager.cancelDownload();
+  ipcMain.handle('storage:deleteLocalModelFiles', async () => {
+    const res = llmManager.deleteOrphanedLocalModel();
+    const db = store.load();
+    db.settings.dismissedLocalModelCleanupPrompt = true;
+    store.save(db);
+    return res;
   });
 
-  ipcMain.handle(
-    'llm:deleteModel',
-    async (_event, modelType: LocalLlmModelType = 'standard') => {
-      return llmManager.deleteModel(modelType);
-    }
-  );
-
-  ipcMain.handle(
-    'llm:testSpeed',
-    async (_event, modelType: LocalLlmModelType = 'standard') => {
-      return llmManager.testSpeed(modelType);
-    }
-  );
-
-  ipcMain.handle(
-    'llm:preloadModel',
-    async (_event, modelType: LocalLlmModelType = 'standard') => {
-      return llmManager.preloadModel(modelType);
-    }
-  );
-
-  ipcMain.handle(
-    'llm:generateSentence',
-    async (
-      _event,
-      params: {
-        english: string;
-        french: string;
-        definition?: string;
-        partOfSpeech?: string;
-        modelType?: LocalLlmModelType;
-      }
-    ) => {
-      return llmManager.generateSentenceWithLocalLlm(params);
-    }
-  );
+  ipcMain.handle('storage:dismissLocalModelCleanup', async () => {
+    const db = store.load();
+    db.settings.dismissedLocalModelCleanupPrompt = true;
+    store.save(db);
+    return true;
+  });
 
   ipcMain.handle(
     'llm:testAiApiKey',
@@ -360,8 +321,6 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
         existingExample?: string;
         existingSource?: ExampleSourceType;
         cascadeOrder?: ExampleSourceType[];
-        localLlmEnabled?: boolean;
-        localLlmModel?: LocalLlmModelType;
         aiApiProvider?: AiApiProvider;
         aiApiKey?: string;
         aiApiEndpoint?: string;

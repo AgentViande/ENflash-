@@ -10,10 +10,6 @@
     "dist",
     "dist-electron"
   ],
-  "asarUnpack": [
-    "**/node_modules/node-llama-cpp/**/*",
-    "**/node_modules/@node-llama-cpp/**/*"
-  ],
   "extraResources": [
     {
       "from": "resources/models",

@@ -15,6 +15,7 @@ import { BadgeUnlockModal } from './components/BadgeUnlockModal';
 import { LevelUpModal } from './components/LevelUpModal';
 import { UpdateModal } from './components/UpdateModal';
 import { WhatsNewModal } from './components/WhatsNewModal';
+import { LocalModelCleanupModal } from './components/LocalModelCleanupModal';
 import { useApp } from './contexts/AppContext';
 import { UpdateInfo } from '../../preload/types';
 
@@ -211,6 +212,8 @@ export const App: React.FC = () => {
         version={currentVersion}
         onClose={handleCloseWhatsNew}
       />
+
+      <LocalModelCleanupModal />
     </div>
   );
 };

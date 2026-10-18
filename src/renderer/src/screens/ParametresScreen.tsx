@@ -40,8 +40,6 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
 
   // Statuts minimaux pour la carte compacte Centre IA
   const [kokoroStatus, setKokoroStatus] = useState<AudioEngineStatus | null>(null);
-  const [isLlmInstalled, setIsLlmInstalled] = useState<boolean>(false);
-
   const loadAiOverviewStatus = useCallback(async () => {
     if (!db?.settings) return;
     try {
@@ -51,13 +49,6 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           preferredVoiceId: db.settings.preferredVoiceId,
         });
         setKokoroStatus(kStatus);
-      }
-      if (window.api?.getLlmStatus) {
-        const [std, lgt] = await Promise.all([
-          window.api.getLlmStatus('standard'),
-          window.api.getLlmStatus('light'),
-        ]);
-        setIsLlmInstalled(!!std?.isInstalled || !!lgt?.isInstalled);
       }
     } catch {}
   }, [db?.settings]);
@@ -203,10 +194,10 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
             </h3>
           </div>
           <p style={{ margin: '6px 0 10px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Gérez la voix neuronale Kokoro, les modèles locaux de phrases d'exemple, le cache et vos clés d'API.
+            Gérez la voix neuronale Kokoro, les phrases d'exemples automatiques (dictionnaire et IA en ligne) et vos clés d'API.
           </p>
           <div style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-primary)' }}>
-            {`Voix naturelle : ${kokoroStatus?.isKokoroReady ? 'Kokoro prête ✅' : 'Voix système ⚠️'} • Phrases : ${isLlmInstalled ? 'Modèle local ✅' : 'Non installé'} • Clé API : ${hasApiKey ? 'Configurée ✅' : 'Non configurée'}`}
+            {`Voix naturelle : ${kokoroStatus?.isKokoroReady ? 'Kokoro prête ✅' : 'Voix système ⚠️'} • Clé API : ${hasApiKey ? 'Configurée ✅' : 'Non configurée'}`}
           </div>
         </div>
 

@@ -148,6 +148,31 @@ export class DatabaseStore {
             dbData.settings.aiApiKeys[activeProv] = dbData.settings.aiApiKey;
           }
         }
+
+        // Retrait propre du modèle local : mise à jour de la cascade
+        if (Array.isArray(dbData.settings.exampleCascadeOrder)) {
+          dbData.settings.exampleCascadeOrder = dbData.settings.exampleCascadeOrder.filter(
+            (s) => (s as string) !== 'local_llm'
+          );
+          if (!dbData.settings.exampleCascadeOrder.includes('api')) {
+            dbData.settings.exampleCascadeOrder.push('api');
+          }
+        } else {
+          dbData.settings.exampleCascadeOrder = ['user', 'dictionary', 'api'];
+        }
+
+        // Nettoyage des propriétés obsolètes
+        delete (dbData.settings as any).localLlmEnabled;
+        delete (dbData.settings as any).localLlmModel;
+      }
+
+      // Migration non-destructive des mots existants : 'local_llm' devient 'api'
+      if (Array.isArray(dbData?.words)) {
+        for (const w of dbData.words) {
+          if ((w as any).exampleSource === 'local_llm') {
+            w.exampleSource = 'api';
+          }
+        }
       }
 
       this.cache = dbData;
