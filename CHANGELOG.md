@@ -1,5 +1,26 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.3.1] - 2026-10-18
+
+### 🐛 Corrections
+- **Suppression du délai bloquant de 15 s sur le modèle local** :
+  - **Timeouts séparés et réalistes** : le chargement disque du modèle à froid (jusqu'à 90-115 s) ne provoque plus jamais d'échec de génération ; le délai de génération pure (25 s) ne s'applique qu'une fois le modèle chargé en RAM.
+  - **Préchauffage transparent en tâche de fond** : préchargement automatique du modèle LLM au lancement de l'application et dès l'ouverture des formulaires d'ajout ou d'édition, rendant les générations quasi-instantanées (500 à 850 ms).
+  - **Priorité absolue des requêtes interactives** : cliquer sur « ✨ Générer une phrase » met instantanément en pause la file de traitement de masse et les tâches de fond afin de dédier 100% de la puissance CPU à la requête utilisateur.
+
+### ✨ Améliorations
+- **Course en parallèle & Repli dictionnaire morphologique** :
+  - Interrogation simultanée de `dictionaryapi.dev` et du modèle local avec affichage instantané du premier résultat prêt.
+  - Détection automatique des pluriels et déclinaisons (*ex: flaps ➔ flap*) pour trouver un exemple académique sans latence.
+  - Proposition de remplacement intelligente lorsqu'une phrase IA de qualité supérieure arrive en arrière-plan.
+- **États visibles & Streaming en direct** :
+  - Affichage précis des étapes sur le bouton : *"Chargement du modèle… (1ère fois)"* puis *"Génération…"*.
+  - Bouton *"✕ Annuler"* disponible à tout moment pour libérer instantanément les ressources.
+  - Affichage des tokens au fur et à mesure de leur génération dans le champ de saisie (streaming).
+- **Auto-adaptation de performance (Centre IA)** :
+  - Affichage du temps de génération réel mesuré sur votre processeur dans le diagnostic matériel.
+  - Détection automatique et recommandation en 1 clic pour basculer vers le modèle Léger (0,5B) si la génération standard dépasse 3 s.
+
 ## [v1.3.0] - 2026-10-18
 
 ### 🚀 Nouveautés
