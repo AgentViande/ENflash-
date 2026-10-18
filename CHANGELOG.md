@@ -1,5 +1,10 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.4.0] - 2026-10-18
+
+### 🚀 Nouveautés
+- feat(ai): support multi-fournisseurs (Gemini, OpenAI, Groq, Mistral), selection dynamique de modele et securisation safeStorage
+
 ## [v1.3.1] - 2026-10-18
 
 ### 🐛 Corrections
