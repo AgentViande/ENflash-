@@ -1,4 +1,17 @@
-# Journal des modifications (CHANGELOG) - ENflash ⚡
+# Journal des modifications (CHANGELOG) - ENflash
+
+## [v1.0.3] - 2026-10-18
+
+### 🚀 Nouveautés & ✨ Améliorations
+- **Mode Entraînement Libre** : possibilité de rejouer le test quotidien le même jour avec exactement les mêmes cartes, sans attribution d'XP, sans impact sur le streak et sans déplacement des boîtes Leitner pour éviter les montées artificielles.
+- **Compte à rebours minuit Paris** : affichage sur l'accueil de l'état du jour (`Test du jour : à faire` ou `Test du jour : fait ✅`) avec compte à rebours dynamique jusqu'à 00h00 heure de Paris.
+- **Rafraîchissement automatique à minuit** : mise à jour instantanée de l'état du jour à 00h00 et détection automatique au retour de veille ou au focus de la fenêtre.
+
+### 🐛 Corrections
+- **Attribution d'XP du test quotidien** : correction de la boucle d'XP infinie ; l'XP, les badges et la validation sont désormais attribués strictement une seule fois par jour calendaire dans le fuseau `Europe/Paris`.
+- **Calcul du streak par jour calendaire** : suppression du délai glissant de 24 h. Le streak augmente de 1 dès le passage à 00h00 heure de Paris (ex: validation à 23h59 puis à 00h01, ou à 08h00 puis le lendemain à 07h00).
+- **Protection anti-triche** : détection et neutralisation des reculs anormaux de l'horloge système sans gain de récompense indue.
+- **Évaluation hebdomadaire** : limitation de l'attribution d'XP à une seule fois par semaine calendaire (lundi 00h00 heure de Paris).
 
 Toutes les modifications notables apportées au projet ENflash sont documentées dans ce fichier.
 
