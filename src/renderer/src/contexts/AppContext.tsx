@@ -9,6 +9,8 @@ import {
   WeeklyEvaluation,
   WeeklyAnswer,
   DailyTestResultItem,
+  SentenceQueueStats,
+  ExampleSourceType,
 } from '../../../shared/types';
 import { calculateLevel } from '../../../shared/constants';
 import { applyReviewResult } from '../../../shared/srs/leitner';
@@ -76,6 +78,12 @@ interface AppContextType {
   clearNewBadge: () => void;
   levelUpData: { oldLevel: number; newLevel: number } | null;
   clearLevelUpData: () => void;
+  // Phrases d'exemple & IA locale
+  sentenceQueueStats: SentenceQueueStats | null;
+  regenerateWordSentence: (wordId: string) => Promise<void>;
+  deleteWordSentence: (wordId: string) => Promise<void>;
+  generateMissingSentences: () => Promise<number>;
+  setSentenceSessionActive: (isActive: boolean) => Promise<void>;
   // Rechargement base
   refreshDatabase: () => Promise<void>;
 }
@@ -89,6 +97,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [levelUpData, setLevelUpData] = useState<{ oldLevel: number; newLevel: number } | null>(null);
   const [currentDayKey, setCurrentDayKey] = useState<string>(() => getParisDayKey());
   const [currentWeekKey, setCurrentWeekKey] = useState<string>(() => getParisWeekKey());
+  const [sentenceQueueStats, setSentenceQueueStats] = useState<SentenceQueueStats | null>(null);
 
   // Charger la base de données au montage
   const refreshDatabase = useCallback(async () => {
@@ -123,6 +132,53 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     refreshDatabase();
+
+    // Initialiser les stats de la file de phrases
+    if (window.api?.getSentenceQueueStats) {
+      window.api.getSentenceQueueStats().then(setSentenceQueueStats).catch(() => {});
+    }
+
+    const unsubProgress = window.api?.onSentenceQueueProgress?.((stats) => {
+      setSentenceQueueStats(stats);
+    });
+
+    const unsubGenerated = window.api?.onSentenceGenerated?.(({ wordId, sentence, source }) => {
+      setDb((prevDb) => {
+        if (!prevDb) return prevDb;
+        const updatedWords = prevDb.words.map((w) => {
+          if (w.id === wordId) {
+            // Ne jamais écraser une phrase manuelle de l'utilisateur
+            if (w.example && w.exampleSource === 'user') return w;
+            return {
+              ...w,
+              example: sentence,
+              exampleSource: source,
+              updatedAt: new Date().toISOString(),
+            };
+          }
+          return w;
+        });
+
+        // Pré-générer l'audio de la phrase d'exemple nouvellement générée
+        if (window.api?.preloadWords && prevDb.settings) {
+          window.api.preloadWords([
+            {
+              text: sentence,
+              accent: prevDb.settings.voiceAccent,
+              voiceId: prevDb.settings.preferredVoiceId,
+              speed: prevDb.settings.voiceSpeed || 1.0,
+            },
+          ]);
+        }
+
+        return { ...prevDb, words: updatedWords };
+      });
+    });
+
+    return () => {
+      if (unsubProgress) unsubProgress();
+      if (unsubGenerated) unsubGenerated();
+    };
   }, [refreshDatabase]);
 
   // Synchronisation automatique à minuit heure de Paris et détection veille / focus
@@ -325,11 +381,13 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
 
       const today = getParisDayKey();
+      const hasUserExample = Boolean(wordData.example && wordData.example.trim());
       const newWord: Word = {
         id: 'w_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
         french: wordData.french.trim(),
         english: wordData.english.trim(),
         example: wordData.example?.trim() || '',
+        exampleSource: hasUserExample ? 'user' : undefined,
         tags: wordData.tags || [],
         note: wordData.note?.trim() || '',
         leitnerBox: 1,
@@ -355,7 +413,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       await persistDb(updatedDb);
       playSfx('success');
 
-      // Pré-génération anticipée immédiate en arrière-plan (mot et exemple)
+      // Si aucune phrase d'exemple n'a été saisie, enfiler pour génération automatique en arrière-plan
+      if (!hasUserExample && window.api?.enqueueSentence) {
+        window.api
+          .enqueueSentence({
+            wordId: newWord.id,
+            english: newWord.english,
+            french: newWord.french,
+            priority: 1, // Priorité 1 : mot ajouté manuellement (urgent)
+          })
+          .catch(() => {});
+      }
+
+      // Pré-génération anticipée immédiate en arrière-plan de la voix (mot et exemple)
       if (window.api?.preloadWords && updatedDb.settings) {
         const items = [
           {
@@ -385,22 +455,35 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const updateWord = useCallback(
     async (word: Word) => {
       if (!db) return;
-      const updatedWords = db.words.map((w) => (w.id === word.id ? { ...word, updatedAt: new Date().toISOString() } : w));
+      const oldWord = db.words.find((w) => w.id === word.id);
+      const isExampleModified = oldWord && oldWord.example !== word.example;
+
+      // Règle d'or : Toute phrase écrite ou modifiée par l'utilisateur devient "ma phrase" (source: user)
+      const updatedWord: Word = {
+        ...word,
+        exampleSource:
+          isExampleModified && word.example?.trim()
+            ? 'user'
+            : word.exampleSource || (word.example?.trim() ? 'user' : undefined),
+        updatedAt: new Date().toISOString(),
+      };
+
+      const updatedWords = db.words.map((w) => (w.id === word.id ? updatedWord : w));
       await persistDb({ ...db, words: updatedWords });
 
       // Pré-génération anticipée immédiate en arrière-plan (mot et exemple)
       if (window.api?.preloadWords && db.settings) {
         const items = [
           {
-            text: word.english,
+            text: updatedWord.english,
             accent: db.settings.voiceAccent,
             voiceId: db.settings.preferredVoiceId,
             speed: db.settings.voiceSpeed || 1.0,
           },
         ];
-        if (word.example && word.example.trim()) {
+        if (updatedWord.example && updatedWord.example.trim()) {
           items.push({
-            text: word.example.trim(),
+            text: updatedWord.example.trim(),
             accent: db.settings.voiceAccent,
             voiceId: db.settings.preferredVoiceId,
             speed: db.settings.voiceSpeed || 1.0,
@@ -411,6 +494,56 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     },
     [db, persistDb]
   );
+
+  // Régénérer la phrase d'exemple d'un mot
+  const regenerateWordSentence = useCallback(
+    async (wordId: string) => {
+      if (!db || !window.api?.enqueueSentence) return;
+      const word = db.words.find((w) => w.id === wordId);
+      if (!word) return;
+
+      // Effacer l'exemple actuel et enfiler pour régénération immédiate
+      const updatedWords = db.words.map((w) =>
+        w.id === wordId ? { ...w, example: '', exampleSource: undefined } : w
+      );
+      await persistDb({ ...db, words: updatedWords });
+
+      await window.api.enqueueSentence({
+        wordId: word.id,
+        english: word.english,
+        french: word.french,
+        priority: 1,
+      });
+    },
+    [db, persistDb]
+  );
+
+  // Supprimer la phrase d'exemple d'un mot
+  const deleteWordSentence = useCallback(
+    async (wordId: string) => {
+      if (!db) return;
+      const updatedWords = db.words.map((w) =>
+        w.id === wordId ? { ...w, example: '', exampleSource: undefined } : w
+      );
+      await persistDb({ ...db, words: updatedWords });
+    },
+    [db, persistDb]
+  );
+
+  // Générer les phrases manquantes de toute la base
+  const generateMissingSentences = useCallback(async (): Promise<number> => {
+    if (!db || !window.api?.enqueueMissingSentences) return 0;
+    const missing = db.words.filter((w) => !w.example || !w.example.trim());
+    if (missing.length === 0) return 0;
+    return await window.api.enqueueMissingSentences(missing);
+  }, [db]);
+
+  // Pause / reprise de la file lors d'une session de test ou d'étude
+  const setSentenceSessionActive = useCallback(async (isActive: boolean) => {
+    if (window.api?.setSentenceSessionActive) {
+      await window.api.setSentenceSessionActive(isActive);
+    }
+  }, []);
 
   // 3. Supprimer un mot
   const deleteWord = useCallback(
@@ -613,6 +746,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         clearNewBadge,
         levelUpData,
         clearLevelUpData: () => setLevelUpData(null),
+        sentenceQueueStats,
+        regenerateWordSentence,
+        deleteWordSentence,
+        generateMissingSentences,
+        setSentenceSessionActive,
         refreshDatabase,
       }}
     >

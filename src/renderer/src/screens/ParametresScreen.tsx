@@ -22,9 +22,30 @@ import {
   Headphones,
   FolderOpen,
   AlertTriangle,
+  Cpu,
+  Zap,
+  Brain,
+  Bot,
+  ArrowUp,
+  ArrowDown,
+  Eye,
+  EyeOff,
+  Key,
+  Pause,
+  HardDrive,
+  BookOpen,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { VoiceAccent, ThemeMode, AudioEngineStatus } from '../../../shared/types';
+import {
+  VoiceAccent,
+  ThemeMode,
+  AudioEngineStatus,
+  LocalLlmStatus,
+  SystemHardwareInfo,
+  SpeedTestResult,
+  LocalLlmModelType,
+  ExampleSourceType,
+} from '../../../shared/types';
 import { AVAILABLE_KOKORO_VOICES, getDefaultVoiceForAccent } from '../../../shared/audio/kokoroVoices';
 import { speakWord, speakText, runVoiceComparison, stopAllAudio } from '../utils/audio';
 import { UpdateInfo } from '../../../preload/types';
@@ -34,7 +55,14 @@ interface ParametresScreenProps {
 }
 
 export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdateModal }) => {
-  const { db, updateSettings, playSfx, refreshDatabase } = useApp();
+  const {
+    db,
+    updateSettings,
+    playSfx,
+    refreshDatabase,
+    sentenceQueueStats,
+    generateMissingSentences,
+  } = useApp();
 
   const [appVersion, setAppVersion] = useState<string>('1.0.0');
   const [checkingUpdates, setCheckingUpdates] = useState<boolean>(false);
@@ -56,6 +84,24 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   const [voiceTestingId, setVoiceTestingId] = useState<string | null>(null);
   const [voiceErrorMap, setVoiceErrorMap] = useState<Record<string, string>>({});
   const [voiceSuccessMap, setVoiceSuccessMap] = useState<Record<string, boolean>>({});
+
+  // Modèle local LLM & Phrases d'exemple
+  const [llmStatusStandard, setLlmStatusStandard] = useState<LocalLlmStatus | null>(null);
+  const [llmStatusLight, setLlmStatusLight] = useState<LocalLlmStatus | null>(null);
+  const [hardwareInfo, setHardwareInfo] = useState<SystemHardwareInfo | null>(null);
+  const [isDownloadingLlm, setIsDownloadingLlm] = useState<boolean>(false);
+  const [downloadLlmProgress, setDownloadLlmProgress] = useState<{
+    modelType: LocalLlmModelType;
+    progress: number;
+    loadedBytes: number;
+    totalBytes: number;
+    speedFormatted?: string;
+  } | null>(null);
+  const [speedTestResult, setSpeedTestResult] = useState<SpeedTestResult | null>(null);
+  const [isTestingSpeed, setIsTestingSpeed] = useState<boolean>(false);
+  const [speedTestError, setSpeedTestError] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState<boolean>(false);
+  const [isGeneratingMissing, setIsGeneratingMissing] = useState<boolean>(false);
 
   // Modale de suppression et régénération du cache
   const [isClearCacheModalOpen, setIsClearCacheModalOpen] = useState<boolean>(false);
@@ -90,10 +136,34 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
     }
   }, [db?.settings]);
 
+  const loadLlmStatus = useCallback(async () => {
+    if (window.api?.getLlmStatus) {
+      try {
+        const [std, lgt] = await Promise.all([
+          window.api.getLlmStatus('standard'),
+          window.api.getLlmStatus('light'),
+        ]);
+        setLlmStatusStandard(std);
+        setLlmStatusLight(lgt);
+      } catch (err) {
+        console.error('Erreur getLlmStatus:', err);
+      }
+    }
+    if (window.api?.getHardwareInfo) {
+      try {
+        const hw = await window.api.getHardwareInfo();
+        setHardwareInfo(hw);
+      } catch (err) {
+        console.error('Erreur getHardwareInfo:', err);
+      }
+    }
+  }, []);
+
   useEffect(() => {
     if (window.api) {
       window.api.getAppVersion().then(setAppVersion);
       loadVoicesAndCache();
+      loadLlmStatus();
 
       const unsubscribe = window.api.onKokoroProgress?.((data) => {
         setKokoroProgress(data);
@@ -110,12 +180,21 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         }
       });
 
+      const unsubLlm = window.api.onLlmDownloadProgress?.((data) => {
+        setDownloadLlmProgress(data);
+        if (data.progress >= 100) {
+          setIsDownloadingLlm(false);
+          loadLlmStatus();
+        }
+      });
+
       return () => {
         if (unsubscribe) unsubscribe();
         if (unsubPreload) unsubPreload();
+        if (unsubLlm) unsubLlm();
       };
     }
-  }, [loadVoicesAndCache]);
+  }, [loadVoicesAndCache, loadLlmStatus]);
 
   if (!db) return null;
   const { settings } = db;
@@ -332,6 +411,117 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         setBackupMessage('Erreur lors de la restauration : ' + res.error);
       }
     }
+  };
+
+  // Handlers pour le modèle local LLM et les phrases d'exemple
+  const handleDownloadModel = async (modelType: LocalLlmModelType) => {
+    if (!window.api?.downloadLlmModel || isDownloadingLlm) return;
+    setIsDownloadingLlm(true);
+    setDownloadLlmProgress({
+      modelType,
+      progress: 0,
+      loadedBytes: 0,
+      totalBytes: modelType === 'standard' ? 1118000000 : 491000000,
+      speedFormatted: 'Démarrage...',
+    });
+    try {
+      const res = await window.api.downloadLlmModel(modelType);
+      if (res.success) {
+        await updateSettings({ localLlmModel: modelType, localLlmEnabled: true });
+        setBackupMessage(
+          `Modèle ${modelType === 'standard' ? 'Standard (1.5B)' : 'Léger (0.5B)'} installé et activé !`
+        );
+        setTimeout(() => setBackupMessage(null), 3500);
+      } else if (res.error) {
+        alert('Erreur lors du téléchargement : ' + res.error);
+      }
+      await loadLlmStatus();
+    } catch (err: any) {
+      alert('Erreur : ' + err.message);
+    } finally {
+      setIsDownloadingLlm(false);
+      setDownloadLlmProgress(null);
+    }
+  };
+
+  const handleCancelLlmDownload = async () => {
+    if (window.api?.cancelLlmDownload) {
+      await window.api.cancelLlmDownload();
+      setIsDownloadingLlm(false);
+      setDownloadLlmProgress(null);
+      await loadLlmStatus();
+    }
+  };
+
+  const handleDeleteModel = async (modelType: LocalLlmModelType) => {
+    if (!window.api?.deleteLlmModel) return;
+    const modelName = modelType === 'standard' ? 'Standard (Qwen2.5-1.5B)' : 'Léger (Qwen2.5-0.5B)';
+    if (!window.confirm(`Supprimer le modèle local ${modelName} du disque ? Vous pourrez le retélécharger à tout moment.`)) {
+      return;
+    }
+    try {
+      const ok = await window.api.deleteLlmModel(modelType);
+      if (ok) {
+        setBackupMessage(`Modèle ${modelName} supprimé`);
+        setTimeout(() => setBackupMessage(null), 3000);
+        await loadLlmStatus();
+      }
+    } catch (err: any) {
+      alert('Erreur suppression modèle : ' + err.message);
+    }
+  };
+
+  const handleRunSpeedTest = async () => {
+    if (!window.api?.testLlmSpeed || isTestingSpeed) return;
+    setIsTestingSpeed(true);
+    setSpeedTestError(null);
+    try {
+      const currentModel = settings.localLlmModel || 'standard';
+      const res = await window.api.testLlmSpeed(currentModel);
+      setSpeedTestResult(res);
+    } catch (err: any) {
+      setSpeedTestError(err.message || 'Erreur lors du test de vitesse');
+    } finally {
+      setIsTestingSpeed(false);
+    }
+  };
+
+  const handleGenerateMissing = async () => {
+    if (isGeneratingMissing) return;
+    setIsGeneratingMissing(true);
+    try {
+      const count = await generateMissingSentences();
+      setBackupMessage(`${count} mots sans exemple ajoutés à la file de génération`);
+      setTimeout(() => setBackupMessage(null), 4000);
+    } catch (err: any) {
+      alert('Erreur lors du lancement : ' + err.message);
+    } finally {
+      setIsGeneratingMissing(false);
+    }
+  };
+
+  const handlePauseResumeQueue = async () => {
+    if (!window.api) return;
+    if (sentenceQueueStats?.isPaused) {
+      await window.api.resumeSentenceQueue();
+    } else {
+      await window.api.pauseSentenceQueue();
+    }
+  };
+
+  const handleCancelQueue = async () => {
+    if (!window.api?.cancelSentenceQueue) return;
+    await window.api.cancelSentenceQueue();
+  };
+
+  const handleMoveCascade = (fromIndex: number, direction: 'up' | 'down') => {
+    const current = [...(settings.exampleCascadeOrder || ['user', 'dictionary', 'local_llm', 'api'])];
+    const toIndex = direction === 'up' ? fromIndex - 1 : fromIndex + 1;
+    if (toIndex < 1 || toIndex >= current.length) return;
+    const temp = current[fromIndex];
+    current[fromIndex] = current[toIndex];
+    current[toIndex] = temp;
+    updateSettings({ exampleCascadeOrder: current });
   };
 
   return (
@@ -1175,7 +1365,945 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         </div>
       </div>
 
-      {/* 3. NOTIFICATIONS DE BUREAU */}
+      {/* 3. PHRASES D'EXEMPLE & MODÈLE LOCAL (HORS LIGNE) 🧠 */}
+      <div
+        style={{
+          backgroundColor: 'var(--bg-card)',
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 'var(--radius-xl)',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '20px',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Brain size={22} color="var(--color-primary)" />
+            <h3 style={{ fontSize: '1.2rem', fontWeight: 800 }}>
+              Phrases d'exemple & IA locale (Hors ligne)
+            </h3>
+          </div>
+          <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px', lineHeight: 1.5 }}>
+            Générez automatiquement des phrases d'exemple contextuelles, courtes et naturelles pour chaque mot de votre vocabulaire (y compris l'aéronautique et les termes techniques), sans compte et sans connexion Internet requise.
+          </p>
+        </div>
+
+        {/* 3.1 Diagnostic matériel & recommandation */}
+        {hardwareInfo && (
+          <div
+            style={{
+              backgroundColor: 'var(--bg-secondary)',
+              border: `1px solid ${
+                hardwareInfo.ramTier === 'optimal' ? 'rgba(16, 185, 129, 0.4)' : 'rgba(245, 158, 11, 0.4)'
+              }`,
+              borderRadius: 'var(--radius-lg)',
+              padding: '16px 18px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem', fontWeight: 700 }}>
+                <Cpu size={18} color="var(--color-primary)" />
+                <span>Diagnostic matériel de votre ordinateur</span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                <span>CPU : <strong>{hardwareInfo.cpuModel}</strong> ({hardwareInfo.cpuCores} cœurs)</span>
+                <span>•</span>
+                <span>RAM : <strong>{hardwareInfo.totalRamGB} Go</strong> (libre : {hardwareInfo.freeRamGB} Go)</span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                fontSize: '0.82rem',
+                color: hardwareInfo.ramTier === 'optimal' ? '#10b981' : '#f59e0b',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '8px',
+                lineHeight: 1.45,
+              }}
+            >
+              {hardwareInfo.ramTier === 'optimal' ? <CheckCircle2 size={16} style={{ flexShrink: 0, marginTop: '2px' }} /> : <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />}
+              <span>{hardwareInfo.recommendation}</span>
+            </div>
+          </div>
+        )}
+
+        {/* 3.2 Interrupteur général de l'IA locale */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: '4px' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+              Activer le modèle de langage local pour les phrases
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Utilise le modèle local sur votre processeur lorsque le dictionnaire en ligne ne contient pas d'exemple ou en mode hors ligne
+            </div>
+          </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={settings.localLlmEnabled !== false}
+              onChange={(e) => updateSettings({ localLlmEnabled: e.target.checked })}
+              style={{ accentColor: 'var(--color-primary)', width: '18px', height: '18px' }}
+            />
+            <span style={{ fontSize: '0.9rem', fontWeight: 700 }}>
+              {settings.localLlmEnabled !== false ? 'Activé' : 'Désactivé'}
+            </span>
+          </label>
+        </div>
+
+        {/* 3.3 Choix du modèle et téléchargement */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+            Modèle d'IA local embarqué (Qwen2.5-Instruct, Apache 2.0)
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: '14px',
+            }}
+          >
+            {/* CARTE MODÈLE STANDARD (1.5B) */}
+            {(() => {
+              const isSelected = (settings.localLlmModel || 'standard') === 'standard';
+              const isInstalled = !!llmStatusStandard?.isInstalled;
+              const isDownloadingThis = isDownloadingLlm && downloadLlmProgress?.modelType === 'standard';
+
+              return (
+                <div
+                  style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-subtle)'}`,
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    position: 'relative',
+                    boxShadow: isSelected ? '0 0 16px rgba(99, 102, 241, 0.15)' : 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>
+                          Standard : Qwen2.5-1.5B
+                        </h4>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 800,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                            color: 'var(--color-primary)',
+                          }}
+                        >
+                          ⭐ Recommandé
+                        </span>
+                      </div>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        Inférence CPU q4_k_m • Taille : ~1.04 Go • RAM requise : ~1.4 Go
+                      </p>
+                    </div>
+
+                    {isInstalled ? (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          color: '#10b981',
+                          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <Check size={12} /> Prêt
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        Non installé
+                      </span>
+                    )}
+                  </div>
+
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                    Excellente richesse de vocabulaire, formulations idiomatiques parfaites et compréhension fine des termes techniques d'aéronautique.
+                  </p>
+
+                  {/* Barre de progression si téléchargement en cours */}
+                  {isDownloadingThis && downloadLlmProgress && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 600 }}>
+                        <span>Téléchargement ({downloadLlmProgress.progress}%)</span>
+                        <span>{downloadLlmProgress.speedFormatted || ''}</span>
+                      </div>
+                      <div style={{ height: '6px', backgroundColor: 'var(--bg-card)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${downloadLlmProgress.progress}%`,
+                            height: '100%',
+                            backgroundColor: 'var(--color-primary)',
+                            borderRadius: '3px',
+                            transition: 'width 0.2s ease',
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+                        <button
+                          onClick={handleCancelLlmDownload}
+                          style={{
+                            fontSize: '0.75rem',
+                            color: 'var(--color-danger, #ef4444)',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '2px 6px',
+                          }}
+                        >
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Boutons d'action */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto', alignItems: 'center' }}>
+                    {!isInstalled ? (
+                      <button
+                        onClick={() => handleDownloadModel('standard')}
+                        disabled={isDownloadingLlm}
+                        style={{
+                          flex: 1,
+                          backgroundColor: 'var(--color-primary)',
+                          color: '#fff',
+                          border: 'none',
+                          padding: '8px 14px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          cursor: isDownloadingLlm ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <Download size={14} />
+                        <span>Télécharger (1.04 Go)</span>
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => updateSettings({ localLlmModel: 'standard' })}
+                          style={{
+                            flex: 1,
+                            backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-card)',
+                            color: isSelected ? '#fff' : 'var(--text-primary)',
+                            border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-subtle)'}`,
+                            padding: '8px 14px',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: '0.82rem',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {isSelected ? <Check size={14} /> : null}
+                          <span>{isSelected ? 'Modèle actif' : 'Activer ce modèle'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteModel('standard')}
+                          title="Supprimer le fichier du modèle pour libérer l'espace disque"
+                          style={{
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            color: 'var(--text-muted)',
+                            padding: '8px 10px',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* CARTE MODÈLE LÉGER (0.5B) */}
+            {(() => {
+              const isSelected = (settings.localLlmModel || 'standard') === 'light';
+              const isInstalled = !!llmStatusLight?.isInstalled;
+              const isDownloadingThis = isDownloadingLlm && downloadLlmProgress?.modelType === 'light';
+
+              return (
+                <div
+                  style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: `2px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-subtle)'}`,
+                    borderRadius: 'var(--radius-lg)',
+                    padding: '18px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    position: 'relative',
+                    boxShadow: isSelected ? '0 0 16px rgba(99, 102, 241, 0.15)' : 'none',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <h4 style={{ margin: 0, fontSize: '1rem', fontWeight: 800 }}>
+                          Léger : Qwen2.5-0.5B
+                        </h4>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 800,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: 'rgba(16, 185, 129, 0.15)',
+                            color: '#10b981',
+                          }}
+                        >
+                          ⚡ Ultra-rapide
+                        </span>
+                      </div>
+                      <p style={{ margin: '4px 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        Inférence CPU q4_k_m • Taille : ~468 Mo • RAM requise : ~700 Mo
+                      </p>
+                    </div>
+
+                    {isInstalled ? (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          fontWeight: 700,
+                          color: '#10b981',
+                          backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                          padding: '3px 8px',
+                          borderRadius: 'var(--radius-sm)',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <Check size={12} /> Prêt
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          fontSize: '0.75rem',
+                          color: 'var(--text-muted)',
+                        }}
+                      >
+                        Non installé
+                      </span>
+                    )}
+                  </div>
+
+                  <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                    Conçu pour les configurations modestes ou avec moins de 4 Go de RAM. Génération ultra-rapide et phrases courtes et directes.
+                  </p>
+
+                  {/* Barre de progression si téléchargement en cours */}
+                  {isDownloadingThis && downloadLlmProgress && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 600 }}>
+                        <span>Téléchargement ({downloadLlmProgress.progress}%)</span>
+                        <span>{downloadLlmProgress.speedFormatted || ''}</span>
+                      </div>
+                      <div style={{ height: '6px', backgroundColor: 'var(--bg-card)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${downloadLlmProgress.progress}%`,
+                            height: '100%',
+                            backgroundColor: 'var(--color-primary)',
+                            borderRadius: '3px',
+                            transition: 'width 0.2s ease',
+                          }}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '2px' }}>
+                        <button
+                          onClick={handleCancelLlmDownload}
+                          style={{
+                            fontSize: '0.75rem',
+                            color: 'var(--color-danger, #ef4444)',
+                            background: 'none',
+                            border: 'none',
+                            cursor: 'pointer',
+                            padding: '2px 6px',
+                          }}
+                        >
+                          Annuler
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Boutons d'action */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto', alignItems: 'center' }}>
+                    {!isInstalled ? (
+                      <button
+                        onClick={() => handleDownloadModel('light')}
+                        disabled={isDownloadingLlm}
+                        style={{
+                          flex: 1,
+                          backgroundColor: 'var(--bg-card)',
+                          color: 'var(--text-primary)',
+                          border: '1px solid var(--border-subtle)',
+                          padding: '8px 14px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.82rem',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          cursor: isDownloadingLlm ? 'not-allowed' : 'pointer',
+                        }}
+                      >
+                        <Download size={14} />
+                        <span>Télécharger (468 Mo)</span>
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => updateSettings({ localLlmModel: 'light' })}
+                          style={{
+                            flex: 1,
+                            backgroundColor: isSelected ? 'var(--color-primary)' : 'var(--bg-card)',
+                            color: isSelected ? '#fff' : 'var(--text-primary)',
+                            border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-subtle)'}`,
+                            padding: '8px 14px',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: '0.82rem',
+                            fontWeight: 700,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '6px',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {isSelected ? <Check size={14} /> : null}
+                          <span>{isSelected ? 'Modèle actif' : 'Activer ce modèle'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteModel('light')}
+                          title="Supprimer le fichier du modèle pour libérer l'espace disque"
+                          style={{
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            color: 'var(--text-muted)',
+                            padding: '8px 10px',
+                            borderRadius: 'var(--radius-md)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+
+        {/* 3.4 Bouton de benchmark "Tester la vitesse de mon PC" */}
+        <div
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px 18px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.95rem', fontWeight: 800 }}>
+                <Zap size={18} color="var(--color-warning, #f59e0b)" />
+                <span>Tester la vitesse de mon PC</span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Mesure le temps de réponse et le débit d'inférence réel (tokens/seconde) sur votre processeur.
+              </p>
+            </div>
+
+            <button
+              onClick={handleRunSpeedTest}
+              disabled={isTestingSpeed}
+              style={{
+                background: 'linear-gradient(135deg, #f59e0b, #d97706)',
+                color: '#fff',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: isTestingSpeed ? 'not-allowed' : 'pointer',
+                boxShadow: '0 2px 8px rgba(245, 158, 11, 0.25)',
+              }}
+            >
+              {isTestingSpeed ? (
+                <>
+                  <RefreshCw size={14} className="animate-spin" />
+                  <span>Test en cours...</span>
+                </>
+              ) : (
+                <>
+                  <Play size={14} fill="currentColor" />
+                  <span>Lancer le test de vitesse</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          {speedTestError && (
+            <div
+              style={{
+                backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: 'var(--color-danger, #ef4444)',
+                borderRadius: 'var(--radius-md)',
+                padding: '8px 12px',
+                fontSize: '0.8rem',
+              }}
+            >
+              {speedTestError}
+            </div>
+          )}
+
+          {speedTestResult && (
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <span style={{ fontWeight: 800, color: 'var(--text-primary)' }}>
+                  Résultat : {speedTestResult.tokensPerSec} tokens/s • {speedTestResult.durationMs} ms ({speedTestResult.ramUsageMB} Mo RAM)
+                </span>
+                <span
+                  style={{
+                    fontSize: '0.75rem',
+                    fontWeight: 700,
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    backgroundColor: speedTestResult.rating === 'fast' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                    color: speedTestResult.rating === 'fast' ? '#10b981' : '#f59e0b',
+                  }}
+                >
+                  {speedTestResult.rating === 'fast' ? '⚡ Très rapide' : speedTestResult.rating === 'acceptable' ? '✅ Fluide' : '🐢 Modéré'}
+                </span>
+              </div>
+
+              <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', fontStyle: 'italic', borderLeft: '3px solid var(--color-primary)', paddingLeft: '8px' }}>
+                Phrase générée : « {speedTestResult.sentence} »
+              </div>
+
+              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                {speedTestResult.recommendation}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 3.5 Générateur en masse pour les mots sans phrase d'exemple */}
+        <div
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px 18px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div>
+              <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--text-primary)' }}>
+                Compléter les mots sans phrase d'exemple
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                {(() => {
+                  const missingCount = db.words.filter((w) => !w.example || !w.example.trim()).length;
+                  return missingCount === 0
+                    ? 'Tous vos mots ont déjà une phrase d’exemple !'
+                    : `${missingCount} mot(s) dans votre vocabulaire n'ont pas encore de phrase d’exemple.`;
+                })()}
+              </div>
+            </div>
+
+            {(() => {
+              const missingCount = db.words.filter((w) => !w.example || !w.example.trim()).length;
+              const isProcessing = !!sentenceQueueStats?.isProcessing;
+
+              return (
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  {isProcessing && (
+                    <>
+                      <button
+                        onClick={handlePauseResumeQueue}
+                        style={{
+                          backgroundColor: 'var(--bg-card)',
+                          border: '1px solid var(--border-subtle)',
+                          color: 'var(--text-secondary)',
+                          padding: '6px 12px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.8rem',
+                          fontWeight: 700,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        {sentenceQueueStats?.isPaused ? <Play size={13} fill="currentColor" /> : <Pause size={13} />}
+                        <span>{sentenceQueueStats?.isPaused ? 'Reprendre' : 'Pause'}</span>
+                      </button>
+
+                      <button
+                        onClick={handleCancelQueue}
+                        style={{
+                          backgroundColor: 'transparent',
+                          border: '1px solid rgba(239, 68, 68, 0.4)',
+                          color: 'var(--color-danger, #ef4444)',
+                          padding: '6px 10px',
+                          borderRadius: 'var(--radius-md)',
+                          fontSize: '0.8rem',
+                          cursor: 'pointer',
+                        }}
+                        title="Annuler les générations restantes"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </>
+                  )}
+
+                  <button
+                    onClick={handleGenerateMissing}
+                    disabled={missingCount === 0 || isProcessing || isGeneratingMissing}
+                    style={{
+                      background: missingCount > 0 ? 'var(--color-primary)' : 'var(--bg-card)',
+                      color: missingCount > 0 ? '#fff' : 'var(--text-muted)',
+                      border: missingCount > 0 ? 'none' : '1px solid var(--border-subtle)',
+                      padding: '8px 16px',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.85rem',
+                      fontWeight: 700,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: (missingCount === 0 || isProcessing || isGeneratingMissing) ? 'not-allowed' : 'pointer',
+                    }}
+                  >
+                    <Sparkles size={14} />
+                    <span>Générer les phrases manquantes</span>
+                  </button>
+                </div>
+              );
+            })()}
+          </div>
+
+          {/* Statut de la file en arrière-plan */}
+          {sentenceQueueStats && sentenceQueueStats.total > 0 && (
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '12px 14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', fontWeight: 600 }}>
+                  <RefreshCw
+                    size={14}
+                    className={sentenceQueueStats.isProcessing && !sentenceQueueStats.isPaused ? 'animate-spin' : ''}
+                    color="var(--color-primary)"
+                  />
+                  <span>
+                    File de génération :{' '}
+                    <strong style={{ color: 'var(--color-primary)' }}>
+                      {sentenceQueueStats.completed} / {sentenceQueueStats.total}
+                    </strong>
+                    {sentenceQueueStats.isPaused && (
+                      <span style={{ color: '#f59e0b', marginLeft: '6px' }}>(En pause)</span>
+                    )}
+                    {sentenceQueueStats.currentWord && (
+                      <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                        {' '}(En cours : « {sentenceQueueStats.currentWord} »)
+                      </span>
+                    )}
+                  </span>
+                </div>
+              </div>
+
+              <div style={{ height: '6px', backgroundColor: 'var(--bg-secondary)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div
+                  style={{
+                    width: `${Math.round((sentenceQueueStats.completed / Math.max(sentenceQueueStats.total, 1)) * 100)}%`,
+                    height: '100%',
+                    backgroundColor: 'var(--color-primary)',
+                    borderRadius: '3px',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 3.6 Ordre de cascade des 4 sources */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+              Cascade de recherche des phrases (ordre de priorité)
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              L'application teste chaque source dans l'ordre indiqué jusqu'à obtenir une phrase courte et pertinente.
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {(settings.exampleCascadeOrder || ['user', 'dictionary', 'local_llm', 'api']).map((source, index) => {
+              const info = {
+                user: {
+                  title: '✍️ Ma phrase personnalisée',
+                  desc: 'Vos phrases manuelles ne sont JAMAIS écrasées (priorité absolue)',
+                  isFixed: true,
+                },
+                dictionary: {
+                  title: '📖 Dictionnaire certifié (Free Dictionary API)',
+                  desc: 'Phrases réelles en ligne de qualité dictionnaire',
+                  isFixed: false,
+                },
+                local_llm: {
+                  title: '🤖 Modèle de langage local (Qwen2.5 hors ligne)',
+                  desc: 'Génération instantanée locale sans compte ni internet (termes techniques & aéro)',
+                  isFixed: false,
+                },
+                api: {
+                  title: '✨ Clé API distante (Option Qualité+)',
+                  desc: 'Optionnel : synthèse via votre propre clé OpenAI/Groq',
+                  isFixed: false,
+                },
+              }[source];
+
+              if (!info) return null;
+
+              return (
+                <div
+                  key={source}
+                  style={{
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: 'var(--radius-md)',
+                    padding: '10px 14px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span
+                      style={{
+                        width: '24px',
+                        height: '24px',
+                        borderRadius: '50%',
+                        backgroundColor: 'var(--bg-card)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '0.8rem',
+                        fontWeight: 800,
+                        color: 'var(--color-primary)',
+                      }}
+                    >
+                      {index + 1}
+                    </span>
+                    <div>
+                      <div style={{ fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+                        {info.title}
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        {info.desc}
+                      </div>
+                    </div>
+                  </div>
+
+                  {!info.isFixed && (
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button
+                        onClick={() => handleMoveCascade(index, 'up')}
+                        disabled={index <= 1}
+                        style={{
+                          background: 'none',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '4px',
+                          color: index <= 1 ? 'var(--text-muted)' : 'var(--text-primary)',
+                          cursor: index <= 1 ? 'not-allowed' : 'pointer',
+                          opacity: index <= 1 ? 0.3 : 1,
+                        }}
+                        title="Monter la priorité"
+                      >
+                        <ArrowUp size={13} />
+                      </button>
+                      <button
+                        onClick={() => handleMoveCascade(index, 'down')}
+                        disabled={index >= 3}
+                        style={{
+                          background: 'none',
+                          border: '1px solid var(--border-subtle)',
+                          borderRadius: 'var(--radius-sm)',
+                          padding: '4px',
+                          color: index >= 3 ? 'var(--text-muted)' : 'var(--text-primary)',
+                          cursor: index >= 3 ? 'not-allowed' : 'pointer',
+                          opacity: index >= 3 ? 0.3 : 1,
+                        }}
+                        title="Descendre la priorité"
+                      >
+                        <ArrowDown size={13} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 3.7 Option Qualité+ : Clé API externe (Facultatif) */}
+        <div
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px 18px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Key size={18} color="var(--color-primary)" />
+            <div style={{ fontSize: '0.95rem', fontWeight: 800 }}>
+              Option Qualité+ : Clé API distante (Facultatif)
+            </div>
+          </div>
+          <p style={{ margin: 0, fontSize: '0.8rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+            Totalement optionnel. Si vous possédez une clé OpenAI ou compatible (Groq, OpenRouter), vous pouvez la renseigner ici pour enrichir vos phrases.
+          </p>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input
+                type={showApiKey ? 'text' : 'password'}
+                placeholder="sk-..."
+                value={settings.aiApiKey || ''}
+                onChange={(e) => updateSettings({ aiApiKey: e.target.value })}
+                style={{
+                  flex: 1,
+                  padding: '8px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.85rem',
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowApiKey(!showApiKey)}
+                style={{
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-secondary)',
+                  padding: '8px 10px',
+                  borderRadius: 'var(--radius-md)',
+                  cursor: 'pointer',
+                }}
+                title={showApiKey ? 'Masquer la clé' : 'Afficher la clé'}
+              >
+                {showApiKey ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', minWidth: '120px' }}>
+                Point d'accès API :
+              </span>
+              <input
+                type="text"
+                placeholder="https://api.openai.com/v1 (ou https://api.groq.com/openai/v1)"
+                value={settings.aiApiEndpoint || ''}
+                onChange={(e) => updateSettings({ aiApiEndpoint: e.target.value })}
+                style={{
+                  flex: 1,
+                  padding: '6px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  backgroundColor: 'var(--bg-card)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
+                  fontSize: '0.8rem',
+                }}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 4. NOTIFICATIONS DE BUREAU */}
       <div
         style={{
           backgroundColor: 'var(--bg-card)',
@@ -1378,6 +2506,12 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
             <strong>Kokoro-82M :</strong> Moteur de synthèse vocale neuronale locale ultra-naturelle par hexgrad (Licence Apache 2.0).
+          </div>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>Qwen2.5-Instruct (0.5B / 1.5B) :</strong> Modèles de langage locaux pour phrases d'exemple par Alibaba Cloud & Qwen Team (Licence Apache 2.0).
+          </div>
+          <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+            <strong>node-llama-cpp :</strong> Inférence native C++ GGML/llama.cpp optimisée CPU sous Node.js par withcatai (Licence MIT).
           </div>
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
             <strong>Phonemizer & Transformers.js :</strong> Phonémisation et inférence ONNX Runtime Web/Node par Xenova (Licences Apache 2.0 / MIT).

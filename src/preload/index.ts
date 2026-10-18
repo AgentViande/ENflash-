@@ -52,6 +52,42 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener('audio:preloadProgress', handler);
   },
 
+  // Modèle de langage local (LLM) & Phrases d'exemple
+  getLlmStatus: (modelType) => ipcRenderer.invoke('llm:getStatus', modelType),
+  getHardwareInfo: () => ipcRenderer.invoke('llm:getHardwareInfo'),
+  downloadLlmModel: (modelType) => ipcRenderer.invoke('llm:downloadModel', modelType),
+  cancelLlmDownload: () => ipcRenderer.invoke('llm:cancelDownload'),
+  deleteLlmModel: (modelType) => ipcRenderer.invoke('llm:deleteModel', modelType),
+  testLlmSpeed: (modelType) => ipcRenderer.invoke('llm:testSpeed', modelType),
+  generateSentence: (params) => ipcRenderer.invoke('llm:generateSentence', params),
+  resolveSentenceCascade: (params) => ipcRenderer.invoke('llm:resolveCascade', params),
+
+  // File d'attente des phrases
+  enqueueSentence: (params) => ipcRenderer.invoke('sentence:enqueue', params),
+  enqueueMissingSentences: (words) => ipcRenderer.invoke('sentence:enqueueMissing', words),
+  getSentenceQueueStats: () => ipcRenderer.invoke('sentence:getStats'),
+  pauseSentenceQueue: () => ipcRenderer.invoke('sentence:pause'),
+  resumeSentenceQueue: () => ipcRenderer.invoke('sentence:resume'),
+  cancelSentenceQueue: () => ipcRenderer.invoke('sentence:cancel'),
+  setSentenceSessionActive: (isActive) => ipcRenderer.invoke('sentence:setSessionActive', isActive),
+
+  // Événements LLM & Phrases
+  onLlmDownloadProgress: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('llm:downloadProgress', handler);
+    return () => ipcRenderer.removeListener('llm:downloadProgress', handler);
+  },
+  onSentenceQueueProgress: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sentence:queueProgress', handler);
+    return () => ipcRenderer.removeListener('sentence:queueProgress', handler);
+  },
+  onSentenceGenerated: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('sentence:generated', handler);
+    return () => ipcRenderer.removeListener('sentence:generated', handler);
+  },
+
   // Rétro-compatibilité
   getVoicesStatus: () => ipcRenderer.invoke('audio:getVoicesStatus'),
   downloadVoice: (voiceId) => ipcRenderer.invoke('audio:downloadVoice', voiceId),

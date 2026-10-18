@@ -33,6 +33,11 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   dailyReminderTime: '18:00',
   autoCheckUpdates: true,
   lastSeenVersion: '1.0.0',
+  exampleCascadeOrder: ['user', 'dictionary', 'local_llm', 'api'],
+  localLlmEnabled: false,
+  localLlmModel: 'standard',
+  aiApiKey: '',
+  aiApiEndpoint: 'https://api.openai.com/v1',
 };
 
 /**

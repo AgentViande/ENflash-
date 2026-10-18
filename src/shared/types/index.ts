@@ -19,6 +19,7 @@ export interface Word {
   french: string;
   english: string;
   example?: string;
+  exampleSource?: ExampleSourceType;
   tags: string[];
   note?: string;
   leitnerBox: LeitnerBox;
@@ -157,6 +158,74 @@ export interface PiperVoiceModel {
   downloadProgress?: number;
 }
 
+export type ExampleSourceType = 'user' | 'dictionary' | 'local_llm' | 'api';
+export type LocalLlmModelType = 'standard' | 'light';
+
+export interface LocalLlmStatus {
+  isEnabled: boolean;
+  modelType: LocalLlmModelType;
+  isInstalled: boolean;
+  isDownloading: boolean;
+  downloadProgress: number; // 0 à 100
+  downloadSpeed?: string;
+  downloadEta?: string;
+  isLoaded: boolean;
+  isGenerating: boolean;
+  modelSizeBytes: number;
+  modelSizeFormatted: string;
+  ramUsageMB?: number;
+  lastLoadedAt?: string;
+  error?: string;
+}
+
+export interface SystemHardwareInfo {
+  totalRamGB: number;
+  freeRamGB: number;
+  cpuCores: number;
+  cpuModel: string;
+  ramTier: 'optimal' | 'warning' | 'insufficient'; // >=4Go optimal, 3-4Go warning, <3Go insufficient
+  recommendation: string;
+}
+
+export interface SentenceQueueItem {
+  id: string;
+  wordId: string;
+  english: string;
+  french: string;
+  definition?: string;
+  partOfSpeech?: string;
+  priority: number; // 1 = manuel (urgent), 2 = fond / en masse
+  status: 'pending' | 'processing' | 'done' | 'failed';
+  attempts: number;
+  createdAt: string;
+  error?: string;
+}
+
+export interface SentenceQueueStats {
+  total: number;
+  pending: number;
+  completed: number;
+  isProcessing: boolean;
+  isPaused: boolean;
+  currentWord?: string;
+  estimatedRemainingSec?: number;
+}
+
+export interface SentenceQualityResult {
+  isValid: boolean;
+  cleanSentence?: string;
+  reason?: string;
+}
+
+export interface SpeedTestResult {
+  durationMs: number;
+  tokensPerSec: number;
+  ramUsageMB: number;
+  sentence: string;
+  rating: 'fast' | 'acceptable' | 'slow';
+  recommendation: string;
+}
+
 export interface AppSettings {
   theme: ThemeMode;
   cardDirection: CardDirection;
@@ -171,6 +240,13 @@ export interface AppSettings {
   dailyReminderTime: string; // "18:00"
   autoCheckUpdates: boolean;
   lastSeenVersion: string;
+
+  // Phrases d'exemple & IA locale
+  exampleCascadeOrder?: ExampleSourceType[];
+  localLlmEnabled?: boolean;
+  localLlmModel?: LocalLlmModelType;
+  aiApiKey?: string;
+  aiApiEndpoint?: string;
 }
 
 export interface AppDatabase {

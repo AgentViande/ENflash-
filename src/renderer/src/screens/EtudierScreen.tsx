@@ -10,6 +10,9 @@ import {
   Flame,
   ArrowRight,
   Filter,
+  Edit3,
+  Trash2,
+  Bot,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Word, LeitnerBox } from '../../../shared/types';
@@ -29,7 +32,20 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   selectedPlaylistId = null,
   onFinishDaily,
 }) => {
-  const { db, recordReview, recordDailyTest, updateSettings, playSfx, isDailyDoneToday, getTodayOfficialSession } = useApp();
+  const {
+    db,
+    recordReview,
+    recordDailyTest,
+    updateSettings,
+    updateWord,
+    playSfx,
+    isDailyDoneToday,
+    getTodayOfficialSession,
+    regenerateWordSentence,
+    deleteWordSentence,
+    sentenceQueueStats,
+    setSentenceSessionActive,
+  } = useApp();
 
   const [activePlaylistId, setActivePlaylistId] = useState<string | null>(selectedPlaylistId);
   const [isDailyMode, setIsDailyMode] = useState<boolean>(initialDailyMode);
@@ -43,9 +59,21 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   const [sessionCompleted, setSessionCompleted] = useState<boolean>(false);
   const [dailyResults, setDailyResults] = useState<Array<{ wordId: string; success: boolean }>>([]);
 
+  // Édition rapide de la phrase d'exemple sur la carte
+  const [isEditingExample, setIsEditingExample] = useState<boolean>(false);
+  const [editedExampleText, setEditedExampleText] = useState<string>('');
+
   useEffect(() => {
     return subscribeAudioSource(setAudioSource);
   }, []);
+
+  // Mettre en pause la file d'attente de génération d'exemples pendant la session d'étude
+  useEffect(() => {
+    setSentenceSessionActive(true);
+    return () => {
+      setSentenceSessionActive(false);
+    };
+  }, [setSentenceSessionActive]);
 
   const direction = db?.settings.cardDirection || 'fr_to_en';
   const voiceAccent = db?.settings.voiceAccent || 'en-US';
@@ -849,38 +877,299 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
                 </div>
               )}
 
-              {/* Exemple de phrase si disponible avec second bouton d'écoute */}
-              {currentCard.example && (
-                <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-                  <p
-                    style={{
-                      fontSize: '0.95rem',
-                      fontStyle: 'italic',
-                      color: 'var(--text-secondary)',
-                      padding: '0 20px',
-                      margin: 0,
-                    }}
-                  >
-                    "{currentCard.example}"
-                  </p>
+              {/* Exemple de phrase si disponible avec badge de source et contrôles (Régénérer / Modifier / Supprimer) */}
+              {currentCard.example ? (
+                <div
+                  style={{
+                    marginTop: '10px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '8px',
+                    width: '100%',
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {isEditingExample ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', width: '100%', maxWidth: '480px' }}>
+                      <input
+                        type="text"
+                        value={editedExampleText}
+                        onChange={(e) => setEditedExampleText(e.target.value)}
+                        placeholder="Votre phrase d'exemple personnalisée..."
+                        autoFocus
+                        style={{
+                          width: '100%',
+                          fontSize: '0.9rem',
+                          padding: '6px 10px',
+                          borderRadius: 'var(--radius-sm)',
+                          border: '1px solid var(--color-primary)',
+                          backgroundColor: 'var(--bg-secondary)',
+                          color: 'var(--text-primary)',
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            updateWord({
+                              ...currentCard,
+                              example: editedExampleText.trim(),
+                              exampleSource: 'user',
+                            });
+                            setIsEditingExample(false);
+                          } else if (e.key === 'Escape') {
+                            setIsEditingExample(false);
+                          }
+                        }}
+                      />
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '6px' }}>
+                        <button
+                          onClick={() => setIsEditingExample(false)}
+                          style={{
+                            padding: '3px 8px',
+                            fontSize: '0.75rem',
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '4px',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Annuler
+                        </button>
+                        <button
+                          onClick={() => {
+                            updateWord({
+                              ...currentCard,
+                              example: editedExampleText.trim(),
+                              exampleSource: 'user',
+                            });
+                            setIsEditingExample(false);
+                          }}
+                          style={{
+                            padding: '3px 10px',
+                            fontSize: '0.75rem',
+                            backgroundColor: 'var(--color-primary)',
+                            border: 'none',
+                            borderRadius: '4px',
+                            color: '#fff',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Enregistrer (Ma phrase)
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                        <p
+                          style={{
+                            fontSize: '0.95rem',
+                            fontStyle: 'italic',
+                            color: 'var(--text-secondary)',
+                            margin: 0,
+                            textAlign: 'center',
+                          }}
+                        >
+                          "{currentCard.example}"
+                        </p>
+
+                        {/* Badge de source de la phrase */}
+                        {currentCard.exampleSource === 'local_llm' && (
+                          <span
+                            title="Phrase générée hors ligne par le modèle local"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.68rem',
+                              fontWeight: 800,
+                              backgroundColor: 'rgba(99, 102, 241, 0.15)',
+                              color: 'var(--color-primary)',
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              border: '1px solid rgba(99, 102, 241, 0.3)',
+                            }}
+                          >
+                            <Bot size={11} />
+                            <span>Générée par IA (locale)</span>
+                          </span>
+                        )}
+
+                        {currentCard.exampleSource === 'api' && (
+                          <span
+                            title="Phrase générée par l'API distante"
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontSize: '0.68rem',
+                              fontWeight: 800,
+                              backgroundColor: 'rgba(236, 72, 153, 0.15)',
+                              color: '#ec4899',
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                            }}
+                          >
+                            <Sparkles size={11} />
+                            <span>IA</span>
+                          </span>
+                        )}
+
+                        {currentCard.exampleSource === 'dictionary' && (
+                          <span
+                            title="Exemple issu du dictionnaire en ligne"
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                              backgroundColor: 'var(--bg-secondary)',
+                              color: 'var(--text-muted)',
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              border: '1px solid var(--border-subtle)',
+                            }}
+                          >
+                            📖 Dictionnaire
+                          </span>
+                        )}
+
+                        {currentCard.exampleSource === 'user' && (
+                          <span
+                            title="Votre phrase personnalisée (ne sera jamais écrasée)"
+                            style={{
+                              fontSize: '0.68rem',
+                              fontWeight: 700,
+                              backgroundColor: 'rgba(16, 185, 129, 0.12)',
+                              color: '#10b981',
+                              padding: '2px 8px',
+                              borderRadius: '999px',
+                              border: '1px solid rgba(16, 185, 129, 0.3)',
+                            }}
+                          >
+                            ✍️ Ma phrase
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Boutons d'action pour la phrase */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                        <button
+                          onClick={(e) => handlePronounceExample(e)}
+                          title="Écouter la phrase d'exemple"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'var(--bg-secondary)',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '999px',
+                            padding: '3px 10px',
+                            fontSize: '0.72rem',
+                            color: 'var(--text-primary)',
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Volume2 size={12} color="var(--color-primary)" />
+                          <span>Écouter</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            regenerateWordSentence(currentCard.id);
+                          }}
+                          title="Régénérer cette phrase avec l'IA"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '999px',
+                            padding: '3px 8px',
+                            fontSize: '0.72rem',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <RotateCw size={11} />
+                          <span>Régénérer</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditedExampleText(currentCard.example || '');
+                            setIsEditingExample(true);
+                          }}
+                          title="Modifier cette phrase (devient 'ma phrase')"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '999px',
+                            padding: '3px 8px',
+                            fontSize: '0.72rem',
+                            color: 'var(--text-muted)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Edit3 size={11} />
+                          <span>Modifier</span>
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            deleteWordSentence(currentCard.id);
+                          }}
+                          title="Supprimer la phrase d'exemple"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            backgroundColor: 'transparent',
+                            border: '1px solid var(--border-subtle)',
+                            borderRadius: '999px',
+                            padding: '3px 8px',
+                            fontSize: '0.72rem',
+                            color: 'var(--color-danger, #ef4444)',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <Trash2 size={11} />
+                          <span>Supprimer</span>
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                /* Aucune phrase actuellement */
+                <div style={{ marginTop: '10px' }} onClick={(e) => e.stopPropagation()}>
                   <button
-                    onClick={(e) => handlePronounceExample(e)}
-                    title="Écouter la phrase d'exemple"
+                    onClick={() => regenerateWordSentence(currentCard.id)}
+                    title="Générer une phrase d'exemple en arrière-plan"
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '6px',
-                      backgroundColor: 'var(--bg-secondary)',
-                      border: '1px solid var(--border-subtle)',
+                      backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                      border: '1px dashed rgba(99, 102, 241, 0.4)',
                       borderRadius: '999px',
                       padding: '4px 12px',
                       fontSize: '0.75rem',
-                      color: 'var(--text-primary)',
+                      color: 'var(--color-primary)',
                       fontWeight: 600,
+                      cursor: 'pointer',
                     }}
                   >
-                    <Volume2 size={13} color="var(--color-primary)" />
-                    <span>Écouter la phrase d'exemple</span>
+                    <Sparkles size={12} />
+                    <span>Générer un exemple (IA)</span>
                   </button>
                 </div>
               )}

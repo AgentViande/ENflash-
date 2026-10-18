@@ -4,7 +4,9 @@ import { getDatabaseStore } from '../storage/store';
 import { getAppUpdater } from '../updater';
 import { sendDesktopNotification, startReminderScheduler } from '../notifications';
 import { getVoiceManager } from '../audio/voiceManager';
-import { AppDatabase, Word } from '../../shared/types';
+import { getLlmManager } from '../llm/llmManager';
+import { getSentenceQueue } from '../llm/sentenceQueue';
+import { AppDatabase, Word, LocalLlmModelType, ExampleSourceType } from '../../shared/types';
 
 export function registerIpcHandlers(mainWindow: BrowserWindow): void {
   const store = getDatabaseStore();
@@ -244,6 +246,135 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('audio:cancelPreload', async () => {
     voiceMgr.cancelPreload();
+    return true;
+  });
+
+  // --- Modèle de langage local (LLM) & Phrases d'exemple ---
+  const llmManager = getLlmManager();
+  const sentenceQueue = getSentenceQueue();
+
+  ipcMain.handle(
+    'llm:getStatus',
+    async (_event, modelType: LocalLlmModelType = 'standard') => {
+      return llmManager.getStatus(modelType);
+    }
+  );
+
+  ipcMain.handle('llm:getHardwareInfo', async () => {
+    return llmManager.getHardwareInfo();
+  });
+
+  ipcMain.handle(
+    'llm:downloadModel',
+    async (_event, modelType: LocalLlmModelType = 'standard') => {
+      return llmManager.downloadModel(modelType);
+    }
+  );
+
+  ipcMain.handle('llm:cancelDownload', async () => {
+    return llmManager.cancelDownload();
+  });
+
+  ipcMain.handle(
+    'llm:deleteModel',
+    async (_event, modelType: LocalLlmModelType = 'standard') => {
+      return llmManager.deleteModel(modelType);
+    }
+  );
+
+  ipcMain.handle(
+    'llm:testSpeed',
+    async (_event, modelType: LocalLlmModelType = 'standard') => {
+      return llmManager.testSpeed(modelType);
+    }
+  );
+
+  ipcMain.handle(
+    'llm:generateSentence',
+    async (
+      _event,
+      params: {
+        english: string;
+        french: string;
+        definition?: string;
+        partOfSpeech?: string;
+        modelType?: LocalLlmModelType;
+      }
+    ) => {
+      return llmManager.generateSentenceWithLocalLlm(params);
+    }
+  );
+
+  ipcMain.handle(
+    'llm:resolveCascade',
+    async (
+      _event,
+      params: {
+        english: string;
+        french: string;
+        existingExample?: string;
+        existingSource?: ExampleSourceType;
+        cascadeOrder?: ExampleSourceType[];
+        localLlmEnabled?: boolean;
+        localLlmModel?: LocalLlmModelType;
+        aiApiKey?: string;
+        aiApiEndpoint?: string;
+      }
+    ) => {
+      return llmManager.resolveSentenceCascade(params);
+    }
+  );
+
+  // --- File d'attente des phrases d'exemple ---
+  ipcMain.handle(
+    'sentence:enqueue',
+    async (
+      _event,
+      params: {
+        wordId: string;
+        english: string;
+        french: string;
+        priority?: number;
+        definition?: string;
+        partOfSpeech?: string;
+      }
+    ) => {
+      sentenceQueue.enqueue(params);
+      return true;
+    }
+  );
+
+  ipcMain.handle(
+    'sentence:enqueueMissing',
+    async (
+      _event,
+      words: Array<{ id: string; english: string; french: string; example?: string }>
+    ) => {
+      return sentenceQueue.enqueueMissingWords(words);
+    }
+  );
+
+  ipcMain.handle('sentence:getStats', async () => {
+    return sentenceQueue.getStats();
+  });
+
+  ipcMain.handle('sentence:pause', async () => {
+    sentenceQueue.pause();
+    return true;
+  });
+
+  ipcMain.handle('sentence:resume', async () => {
+    sentenceQueue.resume();
+    return true;
+  });
+
+  ipcMain.handle('sentence:cancel', async () => {
+    sentenceQueue.cancel();
+    return true;
+  });
+
+  ipcMain.handle('sentence:setSessionActive', async (_event, isActive: boolean) => {
+    sentenceQueue.setSessionActive(isActive);
     return true;
   });
 
