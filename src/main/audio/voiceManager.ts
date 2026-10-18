@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Worker } from 'node:worker_threads';
-import { VoiceAccent, AudioEngineStatus } from '../../shared/types';
+import { VoiceAccent, AudioEngineStatus, AudioVoiceStatus } from '../../shared/types';
 import { AVAILABLE_KOKORO_VOICES, getDefaultVoiceForAccent } from '../../shared/audio/kokoroVoices';
 
 const KOKORO_REPO_BASE = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
@@ -19,6 +19,7 @@ const KOKORO_MODEL_FILES = [
 ];
 
 export class VoiceManager {
+  public static readonly CACHE_VERSION = 'v2';
   private cacheDir: string;
   private userModelsDir: string;
   private window: BrowserWindow | null = null;
@@ -51,13 +52,9 @@ export class VoiceManager {
    */
   public getKokoroModelDirectory(): { modelParentDir: string; modelPath: string; isComplete: boolean } | null {
     const candidates = [
-      // 1. Packagé via electron-builder extraResources
       process.resourcesPath ? path.join(process.resourcesPath, 'models') : null,
-      // 2. Dev local
       path.join(app.getAppPath(), 'resources', 'models'),
-      // 3. Dossier utilisateur (si téléchargé ou réparé)
       this.userModelsDir,
-      // 4. Cache transformers.js local
       path.join(app.getAppPath(), 'node_modules', '@huggingface', 'transformers', '.cache', 'onnx-community'),
     ].filter(Boolean) as string[];
 
@@ -70,7 +67,6 @@ export class VoiceManager {
         try {
           const stat = fs.statSync(onnxFile);
           if (stat.size > 80000000) {
-            // Modèle q8 complet présent
             return {
               modelParentDir: parentDir,
               modelPath: modelDir,
@@ -128,7 +124,7 @@ export class VoiceManager {
     }
   }
 
-  private sendWorkerMessage(type: string, payload: any): Promise<any> {
+  public sendWorkerMessage(type: string, payload: any): Promise<any> {
     return new Promise((resolve, reject) => {
       if (!this.worker) {
         this.initWorker();
@@ -141,9 +137,9 @@ export class VoiceManager {
       const timeout = setTimeout(() => {
         if (this.workerRequests.has(id)) {
           this.workerRequests.delete(id);
-          reject(new Error('Délai d’attente dépassé pour la synthèse Kokoro (15s)'));
+          reject(new Error('Délai d’attente dépassé pour la synthèse Kokoro (25s)'));
         }
-      }, 15000);
+      }, 25000);
 
       this.workerRequests.set(id, {
         resolve: (val) => {
@@ -184,10 +180,54 @@ export class VoiceManager {
     return this.lastWorkerInitPromise;
   }
 
-  private getHash(text: string, voiceId: string, speed: number = 1.0): string {
+  /**
+   * Clé de hachage sécurisée avec version de cache v2
+   */
+  public getHash(text: string, voiceId: string, speed: number = 1.0): string {
     const norm = text.trim().toLowerCase();
     const speedTag = speed.toFixed(1);
-    return crypto.createHash('md5').update(`${norm}_${voiceId}_${speedTag}`).digest('hex');
+    return crypto
+      .createHash('md5')
+      .update(`${VoiceManager.CACHE_VERSION}_${norm}_${voiceId}_${speedTag}`)
+      .digest('hex');
+  }
+
+  /**
+   * Liste dynamique des voix disponibles vérifiées
+   */
+  public getAvailableVoices(): AudioVoiceStatus[] {
+    const voiceSearchDirs = [
+      path.join(app.getAppPath(), 'node_modules', 'kokoro-js', 'voices'),
+      path.join(__dirname, '..', '..', 'node_modules', 'kokoro-js', 'voices'),
+      process.resourcesPath ? path.join(process.resourcesPath, 'voices') : null,
+      path.join(this.userModelsDir, 'voices'),
+    ].filter(Boolean) as string[];
+
+    const hasModel = this.getKokoroModelDirectory() !== null;
+
+    return AVAILABLE_KOKORO_VOICES.map((v) => {
+      let isAvailable = false;
+      const binFileName = `${v.id}.bin`;
+
+      for (const dir of voiceSearchDirs) {
+        try {
+          if (fs.existsSync(path.join(dir, binFileName))) {
+            isAvailable = true;
+            break;
+          }
+        } catch {}
+      }
+
+      // Si le modèle principal est présent, les voix intégrées sont considérées prêtes
+      if (!isAvailable && hasModel) {
+        isAvailable = true;
+      }
+
+      return {
+        ...v,
+        isAvailable,
+      };
+    });
   }
 
   /**
@@ -215,7 +255,6 @@ export class VoiceManager {
         const fileDef = KOKORO_MODEL_FILES[i];
         const filePath = path.join(destDir, fileDef.name);
 
-        // Si le fichier existe déjà et fait la taille attendue, on passe
         if (fs.existsSync(filePath)) {
           const stat = fs.statSync(filePath);
           if (stat.size >= fileDef.expectedSize * 0.95) {
@@ -255,7 +294,6 @@ export class VoiceManager {
         this.window.webContents.send('audio:kokoroProgress', { progress: 100, label: 'Modèle prêt !' });
       }
 
-      // Réinitialiser le worker avec le nouveau modèle
       this.lastWorkerInitPromise = null;
       await this.warmupModel();
 
@@ -275,6 +313,7 @@ export class VoiceManager {
     const modelInfo = this.getKokoroModelDirectory();
     const isKokoroReady = Boolean(modelInfo && modelInfo.isComplete);
     const cacheStats = this.getCacheStats();
+    const availableVoices = this.getAvailableVoices();
 
     const activeVoiceId =
       preferredVoiceId && preferredVoiceId !== 'auto'
@@ -290,6 +329,7 @@ export class VoiceManager {
       activeEngine: isKokoroReady ? 'kokoro' : 'fallback',
       cacheCount: cacheStats.count,
       cacheFormattedSize: cacheStats.formattedSize,
+      availableVoices,
     };
   }
 
@@ -325,7 +365,7 @@ export class VoiceManager {
   }
 
   /**
-   * Vider le cache audio
+   * Vider le cache audio (supprime tous les fichiers de cache v1 et v2)
    */
   public clearCache(): boolean {
     try {
@@ -338,15 +378,16 @@ export class VoiceManager {
         }
       }
       return true;
-    } catch {
+    } catch (err) {
+      console.warn('[VoiceManager] Erreur lors du vidage du cache audio :', err);
       return false;
     }
   }
 
   /**
-   * Synthèse via Kokoro dans le Worker
+   * Synthèse via Kokoro dans le Worker avec gestion d'erreur explicite
    */
-  private async synthesizeWithKokoro(
+  public async synthesizeWithKokoro(
     text: string,
     voiceId: string,
     speed: number,
@@ -366,11 +407,13 @@ export class VoiceManager {
       });
 
       if (res && res.success && res.wavBase64) {
-        // Sauvegarder dans le cache local sur le disque
+        // Enregistrement dans le cache local sur le disque
         try {
           const buf = Buffer.from(res.wavBase64, 'base64');
           fs.writeFileSync(cachedWavPath, buf);
-        } catch {}
+        } catch (writeErr) {
+          console.warn('[VoiceManager] Avertissement écriture cache audio :', writeErr);
+        }
 
         return {
           success: true,
@@ -380,7 +423,7 @@ export class VoiceManager {
 
       return {
         success: false,
-        error: res?.error || 'Échec de la génération Kokoro',
+        error: res?.error || `Échec de la génération Kokoro pour la voix ${voiceId}`,
       };
     } catch (err: any) {
       return {
@@ -431,11 +474,14 @@ export class VoiceManager {
   }
 
   /**
-   * Cascade audio principale :
-   * 1. Cache local
-   * 2. Kokoro-82M (TTS neuronal haute qualité par défaut)
+   * Cascade audio principale avec bascule entre voix Kokoro avant repli système :
+   * 1. Cache local disque v2
+   * 2. Kokoro-82M :
+   *    2.1 Voix sélectionnée
+   *    2.2 Voix par défaut de l'accent (ex: Heart pour US, Emma pour UK)
+   *    2.3 Voix par défaut de l'autre accent
    * 3. DictionaryAPI (enregistrements humains mots seuls)
-   * 4. Fallback système
+   * 4. Fallback système (SAPI)
    */
   public async getAudioDataUrl(
     text: string,
@@ -463,7 +509,7 @@ export class VoiceManager {
     const cachedWav = path.join(this.cacheDir, `${hash}.wav`);
     const cachedMp3 = path.join(this.cacheDir, `${hash}.mp3`);
 
-    // 1. PALIER 1 : CACHE LOCAL DISQUE
+    // 1. PALIER 1 : CACHE LOCAL DISQUE (v2)
     if (fs.existsSync(cachedWav)) {
       try {
         const data = fs.readFileSync(cachedWav).toString('base64');
@@ -490,7 +536,8 @@ export class VoiceManager {
     // 2. PALIER 2 : MOTEUR NEURONAL LOCAL KOKORO-82M
     const modelInfo = this.getKokoroModelDirectory();
     if (modelInfo) {
-      const kokoroRes = await this.synthesizeWithKokoro(cleanText, effectiveVoiceId, speed, cachedWav);
+      // 2.1 Tentative avec la voix demandée
+      let kokoroRes = await this.synthesizeWithKokoro(cleanText, effectiveVoiceId, speed, cachedWav);
       if (kokoroRes.success && kokoroRes.dataUrl) {
         return {
           success: true,
@@ -498,11 +545,71 @@ export class VoiceManager {
           source: 'kokoro',
           voiceUsed: effectiveVoiceId,
         };
-      } else {
-        console.warn('[VoiceManager] Kokoro a échoué pour ce texte, descente dans la cascade :', kokoroRes.error);
+      }
+
+      console.warn(
+        `[VoiceManager] Échec Kokoro pour la voix "${effectiveVoiceId}" (${kokoroRes.error}). Tentative de repli sur la voix standard de l'accent...`
+      );
+
+      // 2.2 Repli sur la voix par défaut de cet accent
+      const accentDefaultVoice = getDefaultVoiceForAccent(accent);
+      if (effectiveVoiceId !== accentDefaultVoice) {
+        const fallbackHash = this.getHash(cleanText, accentDefaultVoice, speed);
+        const fallbackWav = path.join(this.cacheDir, `${fallbackHash}.wav`);
+
+        if (fs.existsSync(fallbackWav)) {
+          try {
+            const data = fs.readFileSync(fallbackWav).toString('base64');
+            return {
+              success: true,
+              dataUrl: `data:audio/wav;base64,${data}`,
+              source: 'kokoro',
+              voiceUsed: accentDefaultVoice,
+            };
+          } catch {}
+        }
+
+        kokoroRes = await this.synthesizeWithKokoro(cleanText, accentDefaultVoice, speed, fallbackWav);
+        if (kokoroRes.success && kokoroRes.dataUrl) {
+          return {
+            success: true,
+            dataUrl: kokoroRes.dataUrl,
+            source: 'kokoro',
+            voiceUsed: accentDefaultVoice,
+          };
+        }
+      }
+
+      // 2.3 Repli sur la voix par défaut de l'autre accent
+      const secondaryVoice = accent === 'en-GB' ? 'af_heart' : 'bf_emma';
+      if (effectiveVoiceId !== secondaryVoice && accentDefaultVoice !== secondaryVoice) {
+        const secondaryHash = this.getHash(cleanText, secondaryVoice, speed);
+        const secondaryWav = path.join(this.cacheDir, `${secondaryHash}.wav`);
+
+        if (fs.existsSync(secondaryWav)) {
+          try {
+            const data = fs.readFileSync(secondaryWav).toString('base64');
+            return {
+              success: true,
+              dataUrl: `data:audio/wav;base64,${data}`,
+              source: 'kokoro',
+              voiceUsed: secondaryVoice,
+            };
+          } catch {}
+        }
+
+        kokoroRes = await this.synthesizeWithKokoro(cleanText, secondaryVoice, speed, secondaryWav);
+        if (kokoroRes.success && kokoroRes.dataUrl) {
+          return {
+            success: true,
+            dataUrl: kokoroRes.dataUrl,
+            source: 'kokoro',
+            voiceUsed: secondaryVoice,
+          };
+        }
       }
     } else {
-      console.warn('[VoiceManager] Modèle Kokoro absent, tentative téléchargement silencieux en arrière-plan...');
+      console.warn('[VoiceManager] Modèle Kokoro absent, tentative de téléchargement silencieux en arrière-plan...');
       this.installKokoroModel().catch(() => {});
     }
 
@@ -533,13 +640,13 @@ export class VoiceManager {
   }
 
   /**
-   * Génère une phrase de test pour comparaison Kokoro vs Voix Système
+   * Génère une phrase de test concise pour comparaison Kokoro vs Voix Système
    */
   public async getComparisonSample(
     accent: VoiceAccent,
     preferredVoiceId?: string
   ): Promise<{ kokoroDataUrl?: string; sampleText: string }> {
-    const sampleText = 'The quick brown fox jumps over the lazy dog and discovers the beauty of natural speech.';
+    const sampleText = 'Welcome to ENflash, your smart English flashcards app.';
     const voiceId =
       preferredVoiceId && preferredVoiceId !== 'auto'
         ? preferredVoiceId

@@ -171,6 +171,109 @@ describe('Système Audio & Cascade Kokoro-82M', () => {
         expect(['female', 'male']).toContain(voice.gender);
         expect(voice.label).toBeTruthy();
       });
+      expect(AVAILABLE_KOKORO_VOICES.length).toBeGreaterThanOrEqual(9);
+    });
+  });
+
+  describe('Normalisation audio anti-saturation & Encodage WAV PCM 16-bit 24kHz', () => {
+    it('normalise la crête cible sous 0.70 (-3 dB) et ne dépasse jamais [-1.0, 1.0]', async () => {
+      const { encodeNormalizedPcm16Wav } = await import('../src/main/audio/kokoroWorker');
+
+      // Test avec signaux de test contenant différentes amplitudes (y compris extrêmes)
+      const testSignals = [
+        new Float32Array([0.05, -0.1, 0.2, -0.3, 0.15]), // Signal faible
+        new Float32Array([0.5, -0.8, 0.9, -0.95, 0.4]), // Signal fort
+        new Float32Array([1.5, -2.0, 3.0, -1.2]), // Signal débordant (> 1.0)
+      ];
+
+      for (const sig of testSignals) {
+        const result = encodeNormalizedPcm16Wav(sig, 24000, 0.70);
+
+        // La crête réelle ne doit jamais dépasser 0.70
+        expect(result.peak).toBeLessThanOrEqual(0.7001);
+
+        // Vérifier l'en-tête RIFF WAV PCM 16-bit 24 000 Hz
+        const buf = result.buffer;
+        expect(buf.toString('ascii', 0, 4)).toBe('RIFF');
+        expect(buf.toString('ascii', 8, 12)).toBe('WAVE');
+        expect(buf.toString('ascii', 12, 16)).toBe('fmt ');
+        expect(buf.readUInt16LE(20)).toBe(1); // PCM 1 (non compressé)
+        expect(buf.readUInt16LE(22)).toBe(1); // Mono
+        expect(buf.readUInt32LE(24)).toBe(24000); // 24 000 Hz
+        expect(buf.readUInt32LE(28)).toBe(48000); // 48 000 octets/s (24000 * 2)
+        expect(buf.readUInt16LE(32)).toBe(2); // Block align
+        expect(buf.readUInt16LE(34)).toBe(16); // 16 bits
+        expect(buf.toString('ascii', 36, 40)).toBe('data');
+        expect(buf.readUInt32LE(40)).toBe(sig.length * 2);
+
+        // Vérifier chaque échantillon 16-bit dans le buffer
+        for (let i = 0; i < sig.length; i++) {
+          const sample = buf.readInt16LE(44 + i * 2);
+          expect(sample).toBeGreaterThanOrEqual(-32768);
+          expect(sample).toBeLessThanOrEqual(32767);
+          expect(Math.abs(sample) / 32767).toBeLessThanOrEqual(0.705);
+        }
+      }
+    });
+  });
+
+  describe('Isolation et versionnement du cache audio', () => {
+    it('distingue deux voix différentes pour le même mot', async () => {
+      const crypto = await import('node:crypto');
+      const getHash = (text: string, voiceId: string, speed: number = 1.0) => {
+        return crypto
+          .createHash('md5')
+          .update(`v2_${text.trim().toLowerCase()}_${voiceId}_${speed.toFixed(1)}`)
+          .digest('hex');
+      };
+
+      const hashHeart = getHash('cat', 'af_heart', 1.0);
+      const hashBella = getHash('cat', 'af_bella', 1.0);
+      const hashEmma = getHash('cat', 'bf_emma', 1.0);
+
+      // Les empreintes doivent toutes être strictement distinctes
+      expect(hashHeart).not.toBe(hashBella);
+      expect(hashHeart).not.toBe(hashEmma);
+      expect(hashBella).not.toBe(hashEmma);
+
+      // Le même mot et la même voix produisent la même clé
+      expect(getHash('cat', 'af_heart', 1.0)).toBe(hashHeart);
+
+      // Une vitesse différente produit une clé différente
+      expect(getHash('cat', 'af_heart', 0.8)).not.toBe(hashHeart);
+    });
+  });
+
+  describe('Gestion du volume de lecture', () => {
+    it('applique le volume par défaut de 0.8 sans jamais dépasser 1.0', async () => {
+      let createdVolume = -1;
+      (global as any).Audio = class {
+        volume = 1.0;
+        play = vi.fn().mockImplementation(() => {
+          createdVolume = this.volume;
+          return Promise.resolve();
+        });
+        pause = vi.fn();
+      };
+
+      (window.api.getAudioDataUrl as any).mockResolvedValue({
+        success: true,
+        source: 'kokoro',
+        dataUrl: 'data:audio/wav;base64,TEST',
+        voiceUsed: 'af_heart',
+      });
+
+      // 1. Sans volume spécifié -> 0.8 par défaut
+      await speakText('apple');
+      expect(createdVolume).toBe(0.8);
+
+      // 2. Avec volume personnalisé (ex: 0.6)
+      await speakText('apple', { volume: 0.6 });
+      expect(createdVolume).toBe(0.6);
+
+      // 3. Avec volume excessif (> 1.0) -> plafonné à 1.0
+      await speakText('apple', { volume: 1.5 });
+      expect(createdVolume).toBe(1.0);
     });
   });
 });

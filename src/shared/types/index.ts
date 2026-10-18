@@ -119,6 +119,18 @@ export type VoiceAccent = 'en-US' | 'en-GB';
 
 export type AudioSourceType = 'cache' | 'kokoro' | 'dictionary' | 'fallback';
 
+export interface AudioVoiceStatus {
+  id: string;
+  name: string;
+  accent: VoiceAccent;
+  gender: 'female' | 'male';
+  grade: string;
+  label: string;
+  description: string;
+  isDefault?: boolean;
+  isAvailable: boolean;
+}
+
 export interface AudioEngineStatus {
   isKokoroReady: boolean;
   modelStatus: 'installed' | 'downloading' | 'error' | 'absent';
@@ -129,6 +141,7 @@ export interface AudioEngineStatus {
   cacheCount: number;
   cacheFormattedSize: string;
   error?: string;
+  availableVoices?: AudioVoiceStatus[];
 }
 
 export interface PiperVoiceModel {
@@ -149,6 +162,7 @@ export interface AppSettings {
   cardDirection: CardDirection;
   voiceAccent: VoiceAccent;
   voiceSpeed: number; // 0.6 à 1.2
+  voiceVolume?: number; // 0.0 à 1.0 (défaut 0.8)
   autoPronounce: boolean;
   preferredVoiceId?: string;
   soundEffects: boolean;

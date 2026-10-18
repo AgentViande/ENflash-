@@ -105,6 +105,7 @@ export interface SpeakOptions {
   speed?: number; // 0.6 à 1.2
   isSlow?: boolean; // Mode ralenti (0.7x)
   preferredVoiceId?: string;
+  volume?: number; // 0.0 à 1.0 (défaut 0.8)
 }
 
 let currentAudioElement: HTMLAudioElement | null = null;
@@ -198,6 +199,10 @@ export function speakSystemFallback(text: string, options: SpeakOptions): Promis
         : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
       utterance.rate = rate;
 
+      // Volume borné à [0.0, 1.0], défaut 0.8
+      const effectiveVolume = Math.max(0.0, Math.min(1.0, options.volume ?? 0.8));
+      utterance.volume = effectiveVolume;
+
       const bestVoice = getBestSystemEnglishVoice(accent);
       if (bestVoice) {
         utterance.voice = bestVoice;
@@ -219,8 +224,8 @@ export function speakSystemFallback(text: string, options: SpeakOptions): Promis
 
 /**
  * Système de prononciation audio en cascade :
- * 1. Cache local disque
- * 2. Moteur neuronal local hors ligne (Kokoro-82M)
+ * 1. Cache local disque v2
+ * 2. Moteur neuronal local hors ligne (Kokoro-82M) avec repli inter-voix
  * 3. Enregistrement humain gratuit (Free Dictionary API)
  * 4. Voix système naturelle filtrée (dernier recours avec avertissement)
  */
@@ -246,6 +251,7 @@ export async function speakText(text: string, options: SpeakOptions = {}): Promi
   const effectiveSpeed = options.isSlow
     ? 0.7
     : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
+  const effectiveVolume = Math.max(0.0, Math.min(1.0, options.volume ?? 0.8));
 
   // Tenter la cascade Electron (Cache -> Kokoro -> Dictionary API)
   if (typeof window !== 'undefined' && window.api?.getAudioDataUrl) {
@@ -260,12 +266,12 @@ export async function speakText(text: string, options: SpeakOptions = {}): Promi
       if (res && res.success && res.dataUrl) {
         notifyAudioSource(res.source);
         console.log(
-          `[AudioEngine] 🔊 Lecture via : ${res.source.toUpperCase()} (${res.voiceUsed || 'default'})`
+          `[AudioEngine] 🔊 Lecture via : ${res.source.toUpperCase()} (${res.voiceUsed || 'default'}), volume=${effectiveVolume}`
         );
 
         const audio = new Audio(res.dataUrl);
         currentAudioElement = audio;
-        audio.volume = 1.0;
+        audio.volume = effectiveVolume;
 
         await audio.play();
         return;
@@ -276,7 +282,7 @@ export async function speakText(text: string, options: SpeakOptions = {}): Promi
   }
 
   // Palier 4 : Voix système en dernier recours
-  await speakSystemFallback(text, options);
+  await speakSystemFallback(text, { ...options, volume: effectiveVolume });
 }
 
 /**
@@ -331,7 +337,7 @@ export async function runVoiceComparison(
   preferredVoiceId?: string,
   onPhaseChange?: (phase: 'idle' | 'kokoro' | 'gap' | 'system' | 'done') => void
 ): Promise<void> {
-  const sampleText = 'The quick brown fox jumps over the lazy dog and discovers the beauty of natural speech.';
+  const sampleText = 'Welcome to ENflash, your smart English flashcards app.';
   if (onPhaseChange) onPhaseChange('kokoro');
 
   let sampleKokoroUrl: string | undefined;
@@ -345,6 +351,7 @@ export async function runVoiceComparison(
   // 1. Lecture avec Kokoro
   if (sampleKokoroUrl) {
     const audio = new Audio(sampleKokoroUrl);
+    audio.volume = 0.8;
     await new Promise<void>((resolve) => {
       audio.onended = () => resolve();
       audio.onerror = () => resolve();
@@ -352,8 +359,8 @@ export async function runVoiceComparison(
     });
   } else {
     // Si pas de dataUrl pré-généré, appeler speakText
-    await speakText(sampleText, { accent, preferredVoiceId });
-    await new Promise((r) => setTimeout(r, 2500));
+    await speakText(sampleText, { accent, preferredVoiceId, volume: 0.8 });
+    await new Promise((r) => setTimeout(r, 2000));
   }
 
   // 2. Pause de transition (1 seconde)
@@ -362,7 +369,7 @@ export async function runVoiceComparison(
 
   // 3. Lecture avec la Voix Système (SAPI)
   if (onPhaseChange) onPhaseChange('system');
-  await speakSystemFallback(sampleText, { accent });
+  await speakSystemFallback(sampleText, { accent, volume: 0.8 });
 
   if (onPhaseChange) onPhaseChange('done');
 }

@@ -51,6 +51,9 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
     count: 0,
     formattedSize: '0 Mo',
   });
+  const [voiceTestingId, setVoiceTestingId] = useState<string | null>(null);
+  const [voiceErrorMap, setVoiceErrorMap] = useState<Record<string, string>>({});
+  const [voiceSuccessMap, setVoiceSuccessMap] = useState<Record<string, boolean>>({});
 
   const loadVoicesAndCache = useCallback(async () => {
     if (window.api?.getKokoroStatus && db?.settings) {
@@ -92,13 +95,34 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   if (!db) return null;
   const { settings } = db;
 
-  // Test d'une voix spécifique
-  const handleTestVoiceSample = (voiceId: string, accent: VoiceAccent) => {
-    speakText('Hello! Welcome to ENflash, your English flashcards application.', {
-      accent,
-      preferredVoiceId: voiceId,
-      speed: settings.voiceSpeed || 1.0,
+  // Test d'une voix spécifique (échantillon court, net et rapide à synthétiser)
+  const handleTestVoiceSample = async (voiceId: string, accent: VoiceAccent) => {
+    if (voiceTestingId) return;
+    setVoiceTestingId(voiceId);
+    setVoiceErrorMap((prev) => {
+      const copy = { ...prev };
+      delete copy[voiceId];
+      return copy;
     });
+
+    try {
+      await speakText('Welcome to ENflash.', {
+        accent,
+        preferredVoiceId: voiceId,
+        speed: settings.voiceSpeed || 1.0,
+        volume: settings.voiceVolume ?? 0.8,
+      });
+      setVoiceSuccessMap((prev) => ({ ...prev, [voiceId]: true }));
+      await loadVoicesAndCache();
+    } catch (err: any) {
+      console.error(`[Parametres] Erreur synthèse voix ${voiceId}:`, err);
+      setVoiceErrorMap((prev) => ({
+        ...prev,
+        [voiceId]: err?.message || 'Erreur lors de la génération audio',
+      }));
+    } finally {
+      setVoiceTestingId(null);
+    }
   };
 
   // Réinstaller ou réparer le modèle Kokoro
@@ -139,10 +163,12 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   // Vider le cache audio
   const handleClearCache = async () => {
     if (!window.api?.clearCache) return;
-    await window.api.clearCache();
-    await loadVoicesAndCache();
-    setBackupMessage('Cache audio vidé avec succès !');
-    setTimeout(() => setBackupMessage(null), 3000);
+    const ok = await window.api.clearCache();
+    if (ok) {
+      await loadVoicesAndCache();
+      setBackupMessage('Cache audio vidé avec succès (tous les anciens fichiers saturés ont été supprimés) !');
+      setTimeout(() => setBackupMessage(null), 3500);
+    }
   };
 
   // Test du son
@@ -449,7 +475,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           )}
         </div>
 
-        {/* 2.1 Accent d'apprentissage & Voix par défaut */}
+        {/* 2.1 Accent d'apprentissage */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Accent d'apprentissage</div>
@@ -462,14 +488,15 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
             <select
               value={settings.voiceAccent}
               onChange={(e) => updateSettings({ voiceAccent: e.target.value as VoiceAccent })}
-              style={{ fontSize: '0.9rem', fontWeight: 600 }}
+              style={{ fontSize: '0.9rem', fontWeight: 600, padding: '8px 12px', borderRadius: 'var(--radius-md)' }}
             >
-              <option value="en-US">Anglais américain (US)</option>
-              <option value="en-GB">Anglais britannique (UK)</option>
+              <option value="en-US">🇺🇸 Anglais américain (US)</option>
+              <option value="en-GB">🇬🇧 Anglais britannique (UK)</option>
             </select>
 
             <button
               onClick={() => handleTestVoiceSample(settings.preferredVoiceId || '', settings.voiceAccent)}
+              disabled={voiceTestingId !== null}
               title="Tester la prononciation avec cet accent"
               style={{
                 background: 'var(--bg-secondary)',
@@ -482,67 +509,41 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
                 gap: '6px',
                 fontWeight: 700,
                 fontSize: '0.85rem',
+                cursor: voiceTestingId !== null ? 'not-allowed' : 'pointer',
               }}
             >
               <Volume2 size={16} />
-              <span>Tester</span>
+              <span>{voiceTestingId ? 'Génération...' : 'Tester'}</span>
             </button>
           </div>
         </div>
 
-        {/* 2.2 Choix de la voix Kokoro */}
+        {/* 2.2 Curseur de volume de lecture audio */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Voix neuronale naturelle</div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
+              Volume de lecture audio :{' '}
+              <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>
+                {Math.round((settings.voiceVolume ?? 0.8) * 100)}%
+              </span>
+            </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Personnalisez la voix Kokoro (féminines & masculines disponibles)
+              Niveau sonore de prononciation (défaut 80%, plafonné à 100% avec marge de sécurité anti-saturation)
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-            <select
-              value={settings.preferredVoiceId || 'auto'}
-              onChange={(e) => updateSettings({ preferredVoiceId: e.target.value })}
-              style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '220px' }}
-            >
-              <option value="auto">
-                Automatique ({settings.voiceAccent === 'en-GB' ? 'Emma - UK ⭐⭐⭐' : 'Heart - US ⭐⭐⭐'})
-              </option>
-              <optgroup label="🇺🇸 Voix américaines (US)">
-                {AVAILABLE_KOKORO_VOICES.filter((v) => v.accent === 'en-US').map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </optgroup>
-              <optgroup label="🇬🇧 Voix britanniques (UK)">
-                {AVAILABLE_KOKORO_VOICES.filter((v) => v.accent === 'en-GB').map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.label}
-                  </option>
-                ))}
-              </optgroup>
-            </select>
-
-            <button
-              onClick={() => handleTestVoiceSample(settings.preferredVoiceId || '', settings.voiceAccent)}
-              title="Écouter un exemple de la voix sélectionnée"
-              style={{
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-                padding: '8px 12px',
-                borderRadius: 'var(--radius-md)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontWeight: 600,
-                fontSize: '0.8rem',
-              }}
-            >
-              <Play size={14} fill="currentColor" />
-              <span>Exemple</span>
-            </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>10%</span>
+            <input
+              type="range"
+              min="0.1"
+              max="1.0"
+              step="0.05"
+              value={settings.voiceVolume ?? 0.8}
+              onChange={(e) => updateSettings({ voiceVolume: parseFloat(e.target.value) })}
+              style={{ width: '140px', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>100%</span>
           </div>
         </div>
 
@@ -556,7 +557,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
               </span>
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Ajustez l'élocution (un bouton ralenti "0.7x" est aussi accessible sur chaque carte)
+              Ajustez l'élocution (un bouton ralenti "0.7x" reste accessible sur chaque flashcard)
             </div>
           </div>
 
@@ -569,13 +570,217 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
               step="0.05"
               value={settings.voiceSpeed || 1.0}
               onChange={(e) => updateSettings({ voiceSpeed: parseFloat(e.target.value) })}
-              style={{ width: '130px', accentColor: 'var(--color-primary)' }}
+              style={{ width: '140px', accentColor: 'var(--color-primary)', cursor: 'pointer' }}
             />
             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>1.2x</span>
           </div>
         </div>
 
-        {/* 2.4 Lecture automatique */}
+        {/* 2.4 Liste dynamique des voix neuronales disponibles */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--text-primary)' }}>
+                Voix neuronales Kokoro disponibles ({AVAILABLE_KOKORO_VOICES.length} voix vérifiées)
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                Chaque voix dispose de son propre modèle acoustique local, d'un bouton d'écoute instantané et d'un indicateur d'état.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                onClick={() => updateSettings({ preferredVoiceId: 'auto' })}
+                style={{
+                  backgroundColor: (!settings.preferredVoiceId || settings.preferredVoiceId === 'auto')
+                    ? 'var(--color-primary)'
+                    : 'var(--bg-secondary)',
+                  color: (!settings.preferredVoiceId || settings.preferredVoiceId === 'auto')
+                    ? '#fff'
+                    : 'var(--text-secondary)',
+                  border: '1px solid var(--border-subtle)',
+                  padding: '6px 12px',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.8rem',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                Auto ({settings.voiceAccent === 'en-GB' ? 'Emma 🇬🇧' : 'Heart 🇺🇸'})
+              </button>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))',
+              gap: '12px',
+            }}
+          >
+            {AVAILABLE_KOKORO_VOICES.map((voice) => {
+              const isSelected =
+                (settings.preferredVoiceId === voice.id) ||
+                ((!settings.preferredVoiceId || settings.preferredVoiceId === 'auto') &&
+                  getDefaultVoiceForAccent(settings.voiceAccent) === voice.id);
+              const isTesting = voiceTestingId === voice.id;
+              const hasError = Boolean(voiceErrorMap[voice.id]);
+              const hasSuccess = Boolean(voiceSuccessMap[voice.id]);
+
+              return (
+                <div
+                  key={voice.id}
+                  style={{
+                    backgroundColor: isSelected ? 'var(--bg-secondary)' : 'var(--bg-card)',
+                    border: `1.5px solid ${
+                      isSelected
+                        ? 'var(--color-primary)'
+                        : hasError
+                        ? 'var(--color-danger, #ef4444)'
+                        : 'var(--border-subtle)'
+                    }`,
+                    borderRadius: 'var(--radius-md)',
+                    padding: '14px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '10px',
+                    boxShadow: isSelected ? '0 0 0 1px var(--color-primary)' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <span style={{ fontWeight: 800, fontSize: '0.95rem', color: 'var(--text-primary)' }}>
+                          {voice.name}
+                        </span>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          {voice.accent === 'en-GB' ? '🇬🇧 UK' : '🇺🇸 US'}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '0.7rem',
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            backgroundColor: voice.gender === 'female' ? '#f43f5e22' : '#3b82f622',
+                            color: voice.gender === 'female' ? '#f43f5e' : '#3b82f6',
+                          }}
+                        >
+                          {voice.gender === 'female' ? 'Féminin ♀' : 'Masculin ♂'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+                        {voice.description}
+                      </div>
+                    </div>
+
+                    <span
+                      style={{
+                        fontSize: '0.75rem',
+                        fontWeight: 800,
+                        color: 'var(--color-warning, #f59e0b)',
+                      }}
+                    >
+                      {voice.grade}
+                    </span>
+                  </div>
+
+                  {/* État / message d'erreur si la voix a échoué */}
+                  {hasError && (
+                    <div
+                      style={{
+                        backgroundColor: '#ef444415',
+                        border: '1px solid #ef444455',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '6px 10px',
+                        fontSize: '0.75rem',
+                        color: '#ef4444',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                      }}
+                    >
+                      <AlertCircle size={14} />
+                      <span>{voiceErrorMap[voice.id]}</span>
+                    </div>
+                  )}
+
+                  {/* Statut OK */}
+                  {!hasError && hasSuccess && (
+                    <div
+                      style={{
+                        backgroundColor: '#10b98115',
+                        border: '1px solid #10b98155',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '4px 8px',
+                        fontSize: '0.75rem',
+                        color: '#10b981',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        fontWeight: 700,
+                      }}
+                    >
+                      <Check size={13} />
+                      <span>Audio vérifié et net</span>
+                    </div>
+                  )}
+
+                  {/* Boutons d'action : Écouter un exemple + Sélectionner */}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
+                    <button
+                      onClick={() => handleTestVoiceSample(voice.id, voice.accent)}
+                      disabled={isTesting || voiceTestingId !== null}
+                      style={{
+                        flex: 1,
+                        backgroundColor: 'var(--bg-card)',
+                        border: '1px solid var(--border-subtle)',
+                        color: 'var(--text-primary)',
+                        padding: '6px 10px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.8rem',
+                        fontWeight: 600,
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '6px',
+                        cursor: (isTesting || voiceTestingId !== null) ? 'not-allowed' : 'pointer',
+                        opacity: (voiceTestingId !== null && !isTesting) ? 0.6 : 1,
+                      }}
+                    >
+                      <Play size={13} fill="currentColor" />
+                      <span>{isTesting ? 'Génération...' : 'Écouter'}</span>
+                    </button>
+
+                    <button
+                      onClick={() => updateSettings({ preferredVoiceId: voice.id })}
+                      style={{
+                        backgroundColor: isSelected ? 'var(--color-primary)' : 'transparent',
+                        color: isSelected ? '#fff' : 'var(--text-secondary)',
+                        border: `1px solid ${isSelected ? 'var(--color-primary)' : 'var(--border-subtle)'}`,
+                        padding: '6px 12px',
+                        borderRadius: 'var(--radius-sm)',
+                        fontSize: '0.8rem',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      {isSelected ? <Check size={14} /> : null}
+                      <span>{isSelected ? 'Active' : 'Choisir'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 2.5 Lecture automatique */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Lecture automatique de l'audio</div>
@@ -595,7 +800,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </label>
         </div>
 
-        {/* 2.5 OUTIL DE COMPARAISON : Kokoro vs Voix Système */}
+        {/* 2.6 OUTIL DE COMPARAISON : Kokoro vs Voix Système */}
         <div
           style={{
             backgroundColor: 'var(--bg-secondary)',
@@ -689,33 +894,47 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           )}
         </div>
 
-        {/* 2.6 Cache audio & Espace disque */}
+        {/* 2.7 Cache audio v2 & Espace disque */}
         <div
           style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-md)',
+            padding: '14px 18px',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            paddingTop: '6px',
-            borderTop: '1px solid var(--border-subtle)',
+            flexWrap: 'wrap',
+            gap: '12px',
           }}
         >
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Espace utilisé par les audios en cache : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers mémorisés pour relecture instantanée)
+          <div>
+            <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>
+              Cache audio local (v2) : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers WAV PCM 24 kHz)
+            </div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
+              Chaque prononciation est mémorisée localement pour une relecture instantanée sans calcul.
+            </div>
           </div>
 
           <button
             onClick={handleClearCache}
             style={{
-              background: 'transparent',
+              backgroundColor: 'var(--bg-card)',
               border: '1px solid var(--border-subtle)',
-              color: 'var(--text-muted)',
-              padding: '6px 12px',
-              borderRadius: 'var(--radius-sm)',
+              color: 'var(--color-danger, #ef4444)',
+              padding: '8px 14px',
+              borderRadius: 'var(--radius-md)',
               fontSize: '0.8rem',
-              fontWeight: 600,
+              fontWeight: 700,
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
             }}
           >
-            Vider le cache audio
+            <Trash2 size={14} />
+            <span>Vider le cache audio</span>
           </button>
         </div>
 

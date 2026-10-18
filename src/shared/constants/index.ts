@@ -24,6 +24,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   cardDirection: 'fr_to_en',
   voiceAccent: 'en-US',
   voiceSpeed: 1.0,
+  voiceVolume: 0.8,
   autoPronounce: false,
   preferredVoiceId: 'auto',
   soundEffects: true,
