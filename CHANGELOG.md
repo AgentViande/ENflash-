@@ -1,5 +1,35 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.2.0] - 2026-10-18
+
+### 🚀 Nouveautés & ✨ Améliorations
+- **Modèle de langage local (LLM) pour phrases d'exemple hors ligne (Plug & Play)** :
+  - **Inférence 100% locale et hors ligne** : intégration du modèle de langage `Qwen2.5-Instruct` (licence Apache 2.0) quantifié en GGUF `q4_k_m` via `node-llama-cpp`, sans aucun compte, clé API ni connexion requise.
+  - **Deux déclinaisons selon la puissance du PC** :
+    - **Standard (Recommandé) - Qwen2.5-1.5B (~1.04 Go)** : qualité optimale, richesse de vocabulaire et compréhension parfaite des termes techniques et aéronautiques (*leading edge*, *stall*, *altimeter*, *aileron*).
+    - **Léger - Qwen2.5-0.5B (~468 Mo)** : empreinte mémoire minimale (~1 Go RAM) et inférence ultra-rapide (200 ms), idéal pour les PC avec moins de 4 Go de RAM.
+  - **Inférence non bloquante en arrière-plan** : exécutée dans un Worker thread Node.js dédié (`llmWorker.ts`), limitée à la moitié des cœurs CPU (`os.cpus().length / 2`), avec coordination inter-processus évitant les surcharges lors des synthèses vocales Kokoro.
+  - **Économie de RAM & Déchargement automatique** : le modèle se décharge automatiquement de la mémoire après 3 minutes d'inactivité.
+- **Cascade intelligente de recherche des phrases en 4 niveaux** :
+  1. *Ma phrase personnalisée* : priorité absolue, vos phrases manuelles ne sont JAMAIS écrasées.
+  2. *Dictionnaire en ligne certifié* : Free Dictionary API pour des exemples académiques réels.
+  3. *Modèle local Qwen2.5* : génération contextuelle immédiate hors ligne.
+  4. *Clé API distante* : Option Qualité+ facultative (OpenAI / Groq) si configurée.
+  - *Repli gracieux sans erreur si aucune phrase n'est trouvée.*
+- **Contrôle qualité strict des phrases générées (QC)** :
+  - Longueur calibrée entre 5 et 18 mots, présence obligatoire du mot cible (avec gestion des déclinaisons et mots composés comme *leading edge*), ponctuation anglaise standard, et élimination totale des bavardages conversationnels (*"Sure! Here is a sentence:"*).
+- **Interface & Gestion dans les Paramètres (Paramètres > Phrases)** :
+  - **Diagnostic matériel automatique** : détection de votre processeur et de la mémoire RAM avec recommandation personnalisée.
+  - **Gestionnaire de modèles** : téléchargement en un clic avec barre de progression en direct, et bouton de suppression pour libérer l'espace disque.
+  - **Bouton « Tester la vitesse de mon PC »** : benchmark en direct mesurant les tokens/seconde et la réactivité réelle sur votre processeur.
+  - **Générateur en masse** : bouton pour compléter en arrière-plan tous les mots de votre vocabulaire sans phrase d'exemple avec suivi en direct, bouton pause et reprise.
+  - **Réorganisation de la cascade** : flèches Haut / Bas pour personnaliser la priorité des sources.
+  - **Option Qualité+** : champ pour renseigner une clé API personnelle optionnelle (OpenAI / Groq).
+- **Cartes flashcards enrichies (Écran Étudier)** :
+  - Badges discrets au verso indiquant la source exacte de la phrase : `✍️ Ma phrase`, `📖 Dictionnaire`, `🤖 IA (locale)` ou `✨ IA`.
+  - Boutons d'action directs : Écouter l'exemple, Régénérer avec l'IA, Modifier directement sur la carte et Supprimer.
+  - Mise en pause automatique de la file de génération pendant vos sessions de révision pour garantir 100% de fluidité.
+
 ## [v1.1.2] - 2026-10-18
 
 ### 🚀 Nouveautés & ✨ Améliorations
