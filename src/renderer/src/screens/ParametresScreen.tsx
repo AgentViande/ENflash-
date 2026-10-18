@@ -18,10 +18,13 @@ import {
   Info,
   ShieldCheck,
   Sliders,
+  Wrench,
+  Headphones,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
-import { VoiceAccent, ThemeMode, PiperVoiceModel } from '../../../shared/types';
-import { speakWord, speakText } from '../utils/audio';
+import { VoiceAccent, ThemeMode, AudioEngineStatus } from '../../../shared/types';
+import { AVAILABLE_KOKORO_VOICES, getDefaultVoiceForAccent } from '../../../shared/audio/kokoroVoices';
+import { speakWord, speakText, runVoiceComparison } from '../utils/audio';
 import { UpdateInfo } from '../../../preload/types';
 
 interface ParametresScreenProps {
@@ -36,20 +39,27 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
   const [updateMessage, setUpdateMessage] = useState<string | null>(null);
   const [backupMessage, setBackupMessage] = useState<string | null>(null);
 
-  // Voix neuronales & Cache
-  const [piperVoices, setPiperVoices] = useState<PiperVoiceModel[]>([]);
-  const [downloadingVoiceId, setDownloadingVoiceId] = useState<string | null>(null);
-  const [voiceProgress, setVoiceProgress] = useState<Record<string, number>>({});
+  // Moteur neuronal Kokoro & Cache
+  const [kokoroStatus, setKokoroStatus] = useState<AudioEngineStatus | null>(null);
+  const [isInstallingKokoro, setIsInstallingKokoro] = useState<boolean>(false);
+  const [kokoroProgress, setKokoroProgress] = useState<{ progress: number; label: string }>({
+    progress: 0,
+    label: '',
+  });
+  const [comparisonPhase, setComparisonPhase] = useState<'idle' | 'kokoro' | 'gap' | 'system' | 'done'>('idle');
   const [cacheStats, setCacheStats] = useState<{ count: number; formattedSize: string }>({
     count: 0,
     formattedSize: '0 Mo',
   });
 
   const loadVoicesAndCache = useCallback(async () => {
-    if (window.api?.getVoicesStatus) {
+    if (window.api?.getKokoroStatus && db?.settings) {
       try {
-        const voices = await window.api.getVoicesStatus();
-        setPiperVoices(voices);
+        const status = await window.api.getKokoroStatus({
+          accent: db.settings.voiceAccent,
+          preferredVoiceId: db.settings.preferredVoiceId,
+        });
+        setKokoroStatus(status);
       } catch {}
     }
     if (window.api?.getCacheStats) {
@@ -58,17 +68,17 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         setCacheStats({ count: stats.count, formattedSize: stats.formattedSize });
       } catch {}
     }
-  }, []);
+  }, [db?.settings]);
 
   useEffect(() => {
     if (window.api) {
       window.api.getAppVersion().then(setAppVersion);
       loadVoicesAndCache();
 
-      const unsubscribe = window.api.onVoiceDownloadProgress?.(({ voiceId, progress }) => {
-        setVoiceProgress((prev) => ({ ...prev, [voiceId]: progress }));
-        if (progress >= 100) {
-          setDownloadingVoiceId(null);
+      const unsubscribe = window.api.onKokoroProgress?.((data) => {
+        setKokoroProgress(data);
+        if (data.progress >= 100) {
+          setIsInstallingKokoro(false);
           loadVoicesAndCache();
         }
       });
@@ -91,31 +101,39 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
     });
   };
 
-  // Télécharger une voix Piper
-  const handleDownloadVoice = async (voiceId: string) => {
-    if (!window.api?.downloadVoice) return;
-    setDownloadingVoiceId(voiceId);
-    setVoiceProgress((prev) => ({ ...prev, [voiceId]: 5 }));
+  // Réinstaller ou réparer le modèle Kokoro
+  const handleRepairOrInstallKokoro = async () => {
+    if (!window.api?.installKokoro) return;
+    setIsInstallingKokoro(true);
+    setKokoroProgress({ progress: 5, label: 'Préparation du téléchargement...' });
     try {
-      const res = await window.api.downloadVoice(voiceId);
+      const res = await window.api.installKokoro();
       if (res.success) {
         await loadVoicesAndCache();
+        setBackupMessage('Modèle neuronal Kokoro-82M installé et prêt !');
+        setTimeout(() => setBackupMessage(null), 3500);
       } else if (res.error) {
-        alert('Erreur lors du téléchargement : ' + res.error);
+        alert('Erreur lors de l’installation : ' + res.error);
       }
     } catch (err: any) {
       alert('Erreur : ' + err.message);
     } finally {
-      setDownloadingVoiceId(null);
+      setIsInstallingKokoro(false);
     }
   };
 
-  // Supprimer une voix Piper
-  const handleDeleteVoice = async (voiceId: string) => {
-    if (!window.api?.deleteVoice) return;
-    if (!window.confirm('Voulez-vous supprimer ce modèle de voix pour libérer de l’espace ?')) return;
-    await window.api.deleteVoice(voiceId);
-    await loadVoicesAndCache();
+  // Comparaison audio Kokoro vs Voix Système
+  const handleRunComparison = async () => {
+    if (comparisonPhase !== 'idle' && comparisonPhase !== 'done') return;
+    try {
+      await runVoiceComparison(
+        settings.voiceAccent,
+        settings.preferredVoiceId,
+        (phase) => setComparisonPhase(phase)
+      );
+    } catch (err) {
+      setComparisonPhase('idle');
+    }
   };
 
   // Vider le cache audio
@@ -298,7 +316,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
         </div>
       </div>
 
-      {/* 2. AUDIO & VOIX DE HAUTE QUALITÉ */}
+      {/* 2. AUDIO & MOTEUR NEURONAL KOKORO */}
       <div
         style={{
           backgroundColor: 'var(--bg-card)',
@@ -312,14 +330,126 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>Synthèse vocale & Qualité des voix 🎙️</h3>
+            <h3 style={{ fontSize: '1.25rem', fontWeight: 800 }}>Synthèse vocale neuronale & Prononciation 🎙️</h3>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-              Architecture en cascade : Cache local ➔ Voix neuronales Piper ➔ Enregistrements réels ➔ Voix système
+              Cascade : Cache local ➔ Voix naturelle Kokoro-82M (Hors ligne) ➔ Dictionnaire humain ➔ Voix de secours
             </p>
           </div>
         </div>
 
-        {/* 2.1 Accent vocal */}
+        {/* 2.0 Statut de transparence du moteur (Kokoro vs Voix de secours) */}
+        <div
+          style={{
+            backgroundColor: kokoroStatus?.isKokoroReady
+              ? 'rgba(16, 185, 129, 0.08)'
+              : 'rgba(245, 158, 11, 0.12)',
+            border: kokoroStatus?.isKokoroReady
+              ? '1px solid rgba(16, 185, 129, 0.3)'
+              : '1px solid rgba(245, 158, 11, 0.4)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '16px 20px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '12px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {kokoroStatus?.isKokoroReady ? (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#10b981',
+                    color: '#fff',
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    fontWeight: 800,
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  <Check size={14} />
+                  <span>Voix naturelle Kokoro ✅</span>
+                </div>
+              ) : (
+                <div
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    backgroundColor: '#f59e0b',
+                    color: '#fff',
+                    padding: '4px 10px',
+                    borderRadius: '999px',
+                    fontWeight: 800,
+                    fontSize: '0.8rem',
+                  }}
+                >
+                  <AlertCircle size={14} />
+                  <span>Voix de secours ⚠️</span>
+                </div>
+              )}
+
+              <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                {kokoroStatus?.isKokoroReady
+                  ? 'Moteur neuronal actif (modèle 82M quantifié q8 opérationnel 100% hors ligne)'
+                  : 'Qualité réduite : modèle neuronal non prêt, bascule automatique sur la synthèse Windows'}
+              </span>
+            </div>
+
+            <button
+              onClick={handleRepairOrInstallKokoro}
+              disabled={isInstallingKokoro}
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                padding: '6px 14px',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                cursor: isInstallingKokoro ? 'not-allowed' : 'pointer',
+              }}
+            >
+              <Wrench size={14} color="var(--color-primary)" />
+              <span>{isInstallingKokoro ? 'Installation en cours...' : 'Réparer / réinstaller la voix'}</span>
+            </button>
+          </div>
+
+          {/* Barre de progression pendant l'installation ou réparation */}
+          {isInstallingKokoro && (
+            <div style={{ width: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '4px', color: 'var(--text-secondary)' }}>
+                <span>{kokoroProgress.label || 'Téléchargement du modèle Kokoro-82M...'}</span>
+                <strong>{kokoroProgress.progress}%</strong>
+              </div>
+              <div
+                style={{
+                  height: '8px',
+                  backgroundColor: 'var(--bg-secondary)',
+                  borderRadius: '4px',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${kokoroProgress.progress}%`,
+                    height: '100%',
+                    backgroundColor: 'var(--color-primary)',
+                    borderRadius: '4px',
+                    transition: 'width 0.2s ease',
+                  }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 2.1 Accent d'apprentissage & Voix par défaut */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Accent d'apprentissage</div>
@@ -360,17 +490,73 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </div>
         </div>
 
-        {/* 2.2 Vitesse de lecture (0.6x à 1.2x) */}
+        {/* 2.2 Choix de la voix Kokoro */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Voix neuronale naturelle</div>
+            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+              Personnalisez la voix Kokoro (féminines & masculines disponibles)
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+            <select
+              value={settings.preferredVoiceId || 'auto'}
+              onChange={(e) => updateSettings({ preferredVoiceId: e.target.value })}
+              style={{ fontSize: '0.85rem', fontWeight: 600, minWidth: '220px' }}
+            >
+              <option value="auto">
+                Automatique ({settings.voiceAccent === 'en-GB' ? 'Emma - UK ⭐⭐⭐' : 'Heart - US ⭐⭐⭐'})
+              </option>
+              <optgroup label="🇺🇸 Voix américaines (US)">
+                {AVAILABLE_KOKORO_VOICES.filter((v) => v.accent === 'en-US').map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </optgroup>
+              <optgroup label="🇬🇧 Voix britanniques (UK)">
+                {AVAILABLE_KOKORO_VOICES.filter((v) => v.accent === 'en-GB').map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                  </option>
+                ))}
+              </optgroup>
+            </select>
+
+            <button
+              onClick={() => handleTestVoiceSample(settings.preferredVoiceId || '', settings.voiceAccent)}
+              title="Écouter un exemple de la voix sélectionnée"
+              style={{
+                background: 'var(--bg-secondary)',
+                border: '1px solid var(--border-subtle)',
+                color: 'var(--text-primary)',
+                padding: '8px 12px',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontWeight: 600,
+                fontSize: '0.8rem',
+              }}
+            >
+              <Play size={14} fill="currentColor" />
+              <span>Exemple</span>
+            </button>
+          </div>
+        </div>
+
+        {/* 2.3 Vitesse de prononciation normale */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>
-              Vitesse de prononciation normale :{' '}
+              Vitesse de prononciation :{' '}
               <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>
                 {(settings.voiceSpeed || 1.0).toFixed(1)}x
               </span>
             </div>
             <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-              Ajustez l'élocution (un bouton "Mode lent 0.7x" est aussi disponible directement sur les cartes)
+              Ajustez l'élocution (un bouton ralenti "0.7x" est aussi accessible sur chaque carte)
             </div>
           </div>
 
@@ -389,7 +575,7 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </div>
         </div>
 
-        {/* 2.3 Lecture automatique à l'affichage */}
+        {/* 2.4 Lecture automatique */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
             <div style={{ fontWeight: 700, fontSize: '0.95rem' }}>Lecture automatique de l'audio</div>
@@ -409,269 +595,129 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
           </label>
         </div>
 
-        {/* 2.4 Voix neuronales Piper (Moteur local haute fidélité) */}
+        {/* 2.5 OUTIL DE COMPARAISON : Kokoro vs Voix Système */}
         <div
           style={{
-            background: 'var(--bg-secondary)',
+            backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--border-subtle)',
             borderRadius: 'var(--radius-lg)',
-            padding: '20px',
+            padding: '18px 20px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '16px',
+            gap: '12px',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h4 style={{ fontSize: '1rem', fontWeight: 800 }}>
-                  Voix neuronales hors ligne (Piper TTS)
+                <Headphones size={18} color="var(--color-primary)" />
+                <h4 style={{ fontSize: '0.95rem', fontWeight: 800 }}>
+                  Test comparatif : Kokoro vs Voix Système (SAPI)
                 </h4>
-                <span
-                  style={{
-                    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-                    color: '#10b981',
-                    borderRadius: '4px',
-                    padding: '2px 8px',
-                    fontSize: '0.7rem',
-                    fontWeight: 800,
-                    textTransform: 'uppercase',
-                  }}
-                >
-                  Sans connexion requise
-                </span>
               </div>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Téléchargez les voix de votre choix à la demande pour garder l'installateur léger
+                Écoutez la même phrase successivement avec le moteur neuronal puis avec la voix robotique Windows pour entendre le saut qualitatif.
               </p>
             </div>
 
-            {/* Voix préférée */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
-                Voix active :
-              </span>
-              <select
-                value={settings.preferredVoiceId || 'auto'}
-                onChange={(e) => updateSettings({ preferredVoiceId: e.target.value })}
-                style={{ fontSize: '0.85rem' }}
-              >
-                <option value="auto">Automatique selon l'accent</option>
-                {piperVoices
-                  .filter((v) => v.isDownloaded)
-                  .map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.name}
-                    </option>
-                  ))}
-              </select>
-            </div>
-          </div>
-
-          {/* Liste des 4 modèles */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
-            {piperVoices.map((v) => {
-              const isDownloading = downloadingVoiceId === v.id;
-              const progress = voiceProgress[v.id] || 0;
-
-              return (
-                <div
-                  key={v.id}
-                  style={{
-                    backgroundColor: 'var(--bg-card)',
-                    border: v.isDownloaded
-                      ? '1px solid rgba(16, 185, 129, 0.4)'
-                      : '1px solid var(--border-subtle)',
-                    borderRadius: 'var(--radius-md)',
-                    padding: '14px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '10px',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
-                      <div style={{ fontWeight: 800, fontSize: '0.9rem', color: 'var(--text-primary)' }}>
-                        {v.name}
-                      </div>
-                      <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        {v.accent === 'en-US' ? 'Accent américain' : 'Accent britannique'} • {v.sizeFormatted}
-                      </div>
-                    </div>
-
-                    {v.isDownloaded ? (
-                      <span
-                        style={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px',
-                          color: '#10b981',
-                          fontSize: '0.75rem',
-                          fontWeight: 700,
-                        }}
-                      >
-                        <Check size={14} />
-                        Installée
-                      </span>
-                    ) : (
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                        Non installée
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Barre de progression si en cours de téléchargement */}
-                  {isDownloading && (
-                    <div style={{ width: '100%' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', marginBottom: '4px' }}>
-                        <span>Téléchargement...</span>
-                        <span>{progress}%</span>
-                      </div>
-                      <div
-                        style={{
-                          height: '6px',
-                          backgroundColor: 'var(--border-subtle)',
-                          borderRadius: '3px',
-                          overflow: 'hidden',
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${progress}%`,
-                            height: '100%',
-                            backgroundColor: 'var(--color-primary)',
-                            borderRadius: '3px',
-                            transition: 'width 0.2s ease',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Actions par voix */}
-                  <div style={{ display: 'flex', gap: '8px', marginTop: 'auto' }}>
-                    <button
-                      onClick={() => handleTestVoiceSample(v.id, v.accent)}
-                      style={{
-                        flex: 1,
-                        background: 'var(--bg-secondary)',
-                        border: '1px solid var(--border-subtle)',
-                        borderRadius: 'var(--radius-sm)',
-                        padding: '6px 10px',
-                        fontSize: '0.8rem',
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '6px',
-                        color: 'var(--text-primary)',
-                      }}
-                    >
-                      <Play size={13} fill="currentColor" />
-                      <span>Écouter un exemple</span>
-                    </button>
-
-                    {v.isDownloaded ? (
-                      <button
-                        onClick={() => handleDeleteVoice(v.id)}
-                        title="Supprimer la voix pour libérer l'espace disque"
-                        style={{
-                          background: 'rgba(239, 68, 68, 0.1)',
-                          border: '1px solid rgba(239, 68, 68, 0.3)',
-                          color: '#ef4444',
-                          borderRadius: 'var(--radius-sm)',
-                          padding: '6px 10px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                        }}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleDownloadVoice(v.id)}
-                        disabled={isDownloading}
-                        style={{
-                          background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
-                          color: '#fff',
-                          borderRadius: 'var(--radius-sm)',
-                          padding: '6px 12px',
-                          fontSize: '0.8rem',
-                          fontWeight: 700,
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px',
-                        }}
-                      >
-                        <Download size={13} />
-                        <span>Télécharger</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Espace disque & Gestion du cache audio */}
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              paddingTop: '8px',
-              borderTop: '1px solid var(--border-subtle)',
-            }}
-          >
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              Cache local des audios générés : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers mémorisés)
-            </div>
-
             <button
-              onClick={handleClearCache}
+              onClick={handleRunComparison}
+              disabled={comparisonPhase !== 'idle' && comparisonPhase !== 'done'}
               style={{
-                background: 'transparent',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-muted)',
-                padding: '4px 10px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: '0.75rem',
-                fontWeight: 600,
+                background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                color: '#fff',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: 'var(--radius-md)',
+                fontSize: '0.85rem',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                boxShadow: 'var(--shadow-glow)',
+                cursor: (comparisonPhase !== 'idle' && comparisonPhase !== 'done') ? 'not-allowed' : 'pointer',
               }}
             >
-              Vider le cache audio
+              <Play size={14} fill="currentColor" />
+              <span>
+                {comparisonPhase === 'idle' || comparisonPhase === 'done'
+                  ? 'Lancer le test comparatif'
+                  : 'Comparaison en cours...'}
+              </span>
             </button>
           </div>
+
+          {/* État de la comparaison en temps réel */}
+          {comparisonPhase !== 'idle' && (
+            <div
+              style={{
+                backgroundColor: 'var(--bg-card)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 'var(--radius-md)',
+                padding: '10px 14px',
+                fontSize: '0.85rem',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+              }}
+            >
+              {comparisonPhase === 'kokoro' && (
+                <>
+                  <span style={{ color: '#10b981', fontWeight: 800 }}>🔊 Étape 1/2 :</span>
+                  <span>Lecture avec la voix naturelle Kokoro-82M (modèle neuronal local)...</span>
+                </>
+              )}
+              {comparisonPhase === 'gap' && (
+                <>
+                  <span style={{ color: 'var(--color-primary)', fontWeight: 800 }}>⏸️ Pause (1s)...</span>
+                  <span>Passage à la voix système...</span>
+                </>
+              )}
+              {comparisonPhase === 'system' && (
+                <>
+                  <span style={{ color: '#f59e0b', fontWeight: 800 }}>🤖 Étape 2/2 :</span>
+                  <span>Lecture avec la voix système Windows (SAPI)...</span>
+                </>
+              )}
+              {comparisonPhase === 'done' && (
+                <>
+                  <span style={{ color: '#10b981', fontWeight: 800 }}>✅ Test terminé !</span>
+                  <span>La voix Kokoro est bien plus fluide et humaine.</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Message d'aide si aucune voix neuronale Piper n'est encore installée */}
-        {piperVoices.every((v) => !v.isDownloaded) && (
-          <div
+        {/* 2.6 Cache audio & Espace disque */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingTop: '6px',
+            borderTop: '1px solid var(--border-subtle)',
+          }}
+        >
+          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+            Espace utilisé par les audios en cache : <strong>{cacheStats.formattedSize}</strong> ({cacheStats.count} fichiers mémorisés pour relecture instantanée)
+          </div>
+
+          <button
+            onClick={handleClearCache}
             style={{
-              backgroundColor: 'rgba(99, 102, 241, 0.08)',
-              border: '1px solid rgba(99, 102, 241, 0.3)',
-              borderRadius: 'var(--radius-md)',
-              padding: '14px 16px',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '12px',
-              fontSize: '0.85rem',
-              color: 'var(--text-secondary)',
-              lineHeight: 1.4,
+              background: 'transparent',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-muted)',
+              padding: '6px 12px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: '0.8rem',
+              fontWeight: 600,
             }}
           >
-            <Info size={18} color="var(--color-primary)" style={{ flexShrink: 0, marginTop: '2px' }} />
-            <div>
-              <strong style={{ color: 'var(--text-primary)' }}>Astuce pour une prononciation optimale :</strong>
-              <br />
-              Tant qu'aucune voix neuronale n'est téléchargée, ENflash joue gratuitement les enregistrements humains du dictionnaire pour chaque mot individuel, ou la meilleure voix anglaise naturelle de votre système.
-              Sur Windows, vous pouvez aussi ajouter des voix anglaises naturelles gratuites via :{' '}
-              <em>Paramètres Windows &gt; Heure et langue &gt; Voix &gt; Ajouter des voix</em>.
-            </div>
-          </div>
-        )}
+            Vider le cache audio
+          </button>
+        </div>
 
         {/* 2.5 Bruitages et effets sonores ludiques */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -914,10 +960,10 @@ export const ParametresScreen: React.FC<ParametresScreenProps> = ({ onOpenUpdate
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', fontSize: '0.85rem' }}>
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
-            <strong>Piper TTS :</strong> Moteur de synthèse neuronale locale ultra-rapide par Michael Hansen / Rhasspy (Licence MIT).
+            <strong>Kokoro-82M :</strong> Moteur de synthèse vocale neuronale locale ultra-naturelle par hexgrad (Licence Apache 2.0).
           </div>
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
-            <strong>Modèles vocaux neuronaux :</strong> Jeux de données Lessac, Ryan, Alba et Alan (Licences libres Domaine Public / ODbL / MIT).
+            <strong>Phonemizer & Transformers.js :</strong> Phonémisation et inférence ONNX Runtime Web/Node par Xenova (Licences Apache 2.0 / MIT).
           </div>
           <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
             <strong>Prononciations humaines du dictionnaire :</strong> Free Dictionary API & contributeurs Wikimedia Commons (Licences Creative Commons BY-SA).

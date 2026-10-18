@@ -31,13 +31,23 @@ const api: ElectronAPI = {
     return () => ipcRenderer.removeListener('updater:downloaded', handler);
   },
 
-  // Synthèse vocale & Audio en cascade
+  // Synthèse vocale & Audio en cascade Kokoro
   getAudioDataUrl: (params) => ipcRenderer.invoke('audio:getAudioDataUrl', params),
+  getKokoroStatus: (params) => ipcRenderer.invoke('audio:getKokoroStatus', params),
+  installKokoro: () => ipcRenderer.invoke('audio:installKokoro'),
+  getComparisonSample: (params) => ipcRenderer.invoke('audio:getComparisonSample', params),
+  getCacheStats: () => ipcRenderer.invoke('audio:getCacheStats'),
+  clearCache: () => ipcRenderer.invoke('audio:clearCache'),
+  onKokoroProgress: (callback) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('audio:kokoroProgress', handler);
+    return () => ipcRenderer.removeListener('audio:kokoroProgress', handler);
+  },
+
+  // Rétro-compatibilité
   getVoicesStatus: () => ipcRenderer.invoke('audio:getVoicesStatus'),
   downloadVoice: (voiceId) => ipcRenderer.invoke('audio:downloadVoice', voiceId),
   deleteVoice: (voiceId) => ipcRenderer.invoke('audio:deleteVoice', voiceId),
-  getCacheStats: () => ipcRenderer.invoke('audio:getCacheStats'),
-  clearCache: () => ipcRenderer.invoke('audio:clearCache'),
   onVoiceDownloadProgress: (callback) => {
     const handler = (_event: any, data: any) => callback(data);
     ipcRenderer.on('audio:downloadProgress', handler);

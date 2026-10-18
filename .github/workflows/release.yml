@@ -32,6 +32,9 @@ jobs:
       - name: Run unit tests
         run: npm test
 
+      - name: Prepare Kokoro TTS neural models
+        run: node scripts/prepare-models.mjs
+
       - name: Build application bundle (Vite + Electron)
         run: npx vite build
 

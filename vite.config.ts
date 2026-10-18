@@ -13,7 +13,17 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron/main',
             rollupOptions: {
-              external: ['electron', 'electron-updater'],
+              input: {
+                index: path.resolve(__dirname, 'src/main/index.ts'),
+                kokoroWorker: path.resolve(__dirname, 'src/main/audio/kokoroWorker.ts'),
+              },
+              external: [
+                'electron',
+                'electron-updater',
+                'kokoro-js',
+                '@huggingface/transformers',
+                'onnxruntime-node',
+              ],
             },
           },
         },

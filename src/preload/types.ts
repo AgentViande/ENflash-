@@ -1,4 +1,4 @@
-import { AppDatabase, Word, PiperVoiceModel, VoiceAccent } from '../shared/types';
+import { AppDatabase, Word, PiperVoiceModel, VoiceAccent, AudioEngineStatus, AudioSourceType } from '../shared/types';
 
 export interface UpdateInfo {
   version: string;
@@ -29,19 +29,34 @@ export interface ElectronAPI {
   onUpdateDownloadProgress: (callback: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void;
   onUpdateDownloaded: (callback: (info: UpdateInfo) => void) => () => void;
 
-  // Synthèse vocale & Audio en cascade
-  getAudioDataUrl: (params: { text: string; accent: VoiceAccent; preferredVoiceId?: string }) => Promise<{
+  // Synthèse vocale & Audio en cascade Kokoro
+  getAudioDataUrl: (params: {
+    text: string;
+    accent: VoiceAccent;
+    preferredVoiceId?: string;
+    speed?: number;
+  }) => Promise<{
     success: boolean;
     dataUrl?: string;
-    source: 'cache' | 'piper' | 'dictionary' | 'fallback';
+    source: AudioSourceType;
+    voiceUsed?: string;
     error?: string;
   }>;
-  getVoicesStatus: () => Promise<PiperVoiceModel[]>;
-  downloadVoice: (voiceId: string) => Promise<{ success: boolean; error?: string }>;
-  deleteVoice: (voiceId: string) => Promise<boolean>;
+  getKokoroStatus: (params?: { accent?: VoiceAccent; preferredVoiceId?: string }) => Promise<AudioEngineStatus>;
+  installKokoro: () => Promise<{ success: boolean; error?: string }>;
+  getComparisonSample: (params: { accent: VoiceAccent; preferredVoiceId?: string }) => Promise<{
+    sampleText: string;
+    kokoroDataUrl?: string;
+  }>;
   getCacheStats: () => Promise<{ count: number; totalSizeBytes: number; formattedSize: string }>;
   clearCache: () => Promise<boolean>;
-  onVoiceDownloadProgress: (callback: (data: { voiceId: string; progress: number }) => void) => () => void;
+  onKokoroProgress: (callback: (data: { progress: number; label: string }) => void) => () => void;
+
+  // Rétro-compatibilité
+  getVoicesStatus?: () => Promise<PiperVoiceModel[]>;
+  downloadVoice?: (voiceId: string) => Promise<{ success: boolean; error?: string }>;
+  deleteVoice?: (voiceId: string) => Promise<boolean>;
+  onVoiceDownloadProgress?: (callback: (data: { voiceId: string; progress: number }) => void) => () => void;
 }
 
 declare global {

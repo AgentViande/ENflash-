@@ -1,6 +1,6 @@
 /**
- * Synthétiseur d'effets sonores via Web Audio API et synthèse vocale TTS
- * 100 % autonome : aucun fichier audio externe requis !
+ * Synthétiseur d'effets sonores via Web Audio API et moteur TTS neuronal Kokoro-82M
+ * 100 % autonome et hors ligne avec cascade de secours transparente
  */
 
 let audioCtx: AudioContext | null = null;
@@ -97,7 +97,8 @@ export function playStreakFlameSound(volume: number = 0.5): void {
   playTone(587.33, 'triangle', 0.25, volume * 0.4, 0.08);
 }
 
-import { VoiceAccent } from '../../../shared/types';
+import { VoiceAccent, AudioSourceType } from '../../../shared/types';
+export type { AudioSourceType };
 
 export interface SpeakOptions {
   accent?: VoiceAccent;
@@ -109,6 +110,27 @@ export interface SpeakOptions {
 let currentAudioElement: HTMLAudioElement | null = null;
 let lastSpokenText: string | null = null;
 let lastSpokenOptions: SpeakOptions | null = null;
+let lastAudioSource: AudioSourceType = 'kokoro';
+const sourceListeners: Set<(source: AudioSourceType) => void> = new Set();
+
+export function getLastAudioSource(): AudioSourceType {
+  return lastAudioSource;
+}
+
+export function subscribeAudioSource(listener: (source: AudioSourceType) => void): () => void {
+  sourceListeners.add(listener);
+  listener(lastAudioSource);
+  return () => sourceListeners.delete(listener);
+}
+
+function notifyAudioSource(source: AudioSourceType): void {
+  lastAudioSource = source;
+  sourceListeners.forEach((fn) => {
+    try {
+      fn(source);
+    } catch {}
+  });
+}
 
 /**
  * Sélectionne la meilleure voix anglaise installée sur le système
@@ -157,38 +179,50 @@ export function getBestSystemEnglishVoice(accent: VoiceAccent = 'en-US'): Speech
 /**
  * Synthèse vocale de dernier recours via la Web Speech API
  */
-function speakSystemFallback(text: string, options: SpeakOptions): void {
-  if (!('speechSynthesis' in window)) return;
-
-  try {
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    const accent = options.accent || 'en-US';
-    utterance.lang = accent;
-
-    const rate = options.isSlow
-      ? 0.7
-      : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
-    utterance.rate = rate;
-
-    const bestVoice = getBestSystemEnglishVoice(accent);
-    if (bestVoice) {
-      utterance.voice = bestVoice;
+export function speakSystemFallback(text: string, options: SpeakOptions): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) {
+      resolve();
+      return;
     }
 
-    window.speechSynthesis.speak(utterance);
-  } catch (err) {
-    console.warn('Fallback système vocal :', err);
-  }
+    try {
+      window.speechSynthesis.cancel();
+
+      const utterance = new SpeechSynthesisUtterance(text);
+      const accent = options.accent || 'en-US';
+      utterance.lang = accent;
+
+      const rate = options.isSlow
+        ? 0.7
+        : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
+      utterance.rate = rate;
+
+      const bestVoice = getBestSystemEnglishVoice(accent);
+      if (bestVoice) {
+        utterance.voice = bestVoice;
+      }
+
+      utterance.onend = () => resolve();
+      utterance.onerror = () => resolve();
+
+      notifyAudioSource('fallback');
+      console.warn('[AudioEngine] ⚠️ Voix de secours système SAPI utilisée (qualité réduite) pour :', text);
+
+      window.speechSynthesis.speak(utterance);
+    } catch (err) {
+      console.warn('Erreur fallback système vocal :', err);
+      resolve();
+    }
+  });
 }
 
 /**
  * Système de prononciation audio en cascade :
  * 1. Cache local disque
- * 2. Voix neuronale hors ligne (Piper)
+ * 2. Moteur neuronal local hors ligne (Kokoro-82M)
  * 3. Enregistrement humain gratuit (Free Dictionary API)
- * 4. Voix système naturelle filtrée
+ * 4. Voix système naturelle filtrée (dernier recours avec avertissement)
  */
 export async function speakText(text: string, options: SpeakOptions = {}): Promise<void> {
   if (!text || !text.trim()) return;
@@ -204,42 +238,45 @@ export async function speakText(text: string, options: SpeakOptions = {}): Promi
     } catch {}
     currentAudioElement = null;
   }
-  if ('speechSynthesis' in window) {
+  if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
     window.speechSynthesis.cancel();
   }
 
   const accent = options.accent || 'en-US';
+  const effectiveSpeed = options.isSlow
+    ? 0.7
+    : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
 
-  // Si on est dans Electron, tenter la cascade locale (Cache -> Piper -> Dictionary API)
+  // Tenter la cascade Electron (Cache -> Kokoro -> Dictionary API)
   if (typeof window !== 'undefined' && window.api?.getAudioDataUrl) {
     try {
       const res = await window.api.getAudioDataUrl({
         text,
         accent,
         preferredVoiceId: options.preferredVoiceId,
+        speed: effectiveSpeed,
       });
 
       if (res && res.success && res.dataUrl) {
+        notifyAudioSource(res.source);
+        console.log(
+          `[AudioEngine] 🔊 Lecture via : ${res.source.toUpperCase()} (${res.voiceUsed || 'default'})`
+        );
+
         const audio = new Audio(res.dataUrl);
         currentAudioElement = audio;
-
-        const rate = options.isSlow
-          ? 0.7
-          : Math.max(0.6, Math.min(1.2, options.speed ?? 1.0));
-        audio.playbackRate = rate;
         audio.volume = 1.0;
 
         await audio.play();
         return;
       }
     } catch (err) {
-      // Échec silencieux, descente au palier système
-      console.warn('Cascade audio (Piper / Dictionary) indisponible, bascule système :', err);
+      console.warn('[AudioEngine] Échec de la cascade Kokoro/Dictionary, bascule système :', err);
     }
   }
 
   // Palier 4 : Voix système en dernier recours
-  speakSystemFallback(text, options);
+  await speakSystemFallback(text, options);
 }
 
 /**
@@ -257,19 +294,21 @@ export function replayLastAudio(): void {
 export function preloadAudioList(
   words: string[],
   accent: VoiceAccent = 'en-US',
-  preferredVoiceId?: string
+  preferredVoiceId?: string,
+  speed: number = 1.0
 ): void {
   if (typeof window === 'undefined' || !window.api?.getAudioDataUrl) return;
 
-  // Préchargement asynchrone échelonné pour ne pas saturer le thread
+  // Préchargement asynchrone échelonné pour ne pas surcharger le processeur
   words.forEach((word, index) => {
     setTimeout(() => {
       window.api.getAudioDataUrl({
         text: word,
         accent,
         preferredVoiceId,
+        speed,
       }).catch(() => {});
-    }, index * 200);
+    }, index * 250);
   });
 }
 
@@ -284,3 +323,46 @@ export function speakWord(
   speakText(text, { accent, ...options });
 }
 
+/**
+ * Lance le test de comparaison Kokoro vs Voix Système
+ */
+export async function runVoiceComparison(
+  accent: VoiceAccent,
+  preferredVoiceId?: string,
+  onPhaseChange?: (phase: 'idle' | 'kokoro' | 'gap' | 'system' | 'done') => void
+): Promise<void> {
+  const sampleText = 'The quick brown fox jumps over the lazy dog and discovers the beauty of natural speech.';
+  if (onPhaseChange) onPhaseChange('kokoro');
+
+  let sampleKokoroUrl: string | undefined;
+  if (typeof window !== 'undefined' && window.api?.getComparisonSample) {
+    try {
+      const res = await window.api.getComparisonSample({ accent, preferredVoiceId });
+      sampleKokoroUrl = res.kokoroDataUrl;
+    } catch {}
+  }
+
+  // 1. Lecture avec Kokoro
+  if (sampleKokoroUrl) {
+    const audio = new Audio(sampleKokoroUrl);
+    await new Promise<void>((resolve) => {
+      audio.onended = () => resolve();
+      audio.onerror = () => resolve();
+      audio.play().catch(() => resolve());
+    });
+  } else {
+    // Si pas de dataUrl pré-généré, appeler speakText
+    await speakText(sampleText, { accent, preferredVoiceId });
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+
+  // 2. Pause de transition (1 seconde)
+  if (onPhaseChange) onPhaseChange('gap');
+  await new Promise((r) => setTimeout(r, 1000));
+
+  // 3. Lecture avec la Voix Système (SAPI)
+  if (onPhaseChange) onPhaseChange('system');
+  await speakSystemFallback(sampleText, { accent });
+
+  if (onPhaseChange) onPhaseChange('done');
+}

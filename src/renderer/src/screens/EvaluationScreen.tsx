@@ -17,7 +17,7 @@ import { Word, WeeklyAnswer, LevenshteinStatus } from '../../../shared/types';
 import { evaluateAnswer } from '../../../shared/levenshtein/correction';
 import { Mascot } from '../assets/Mascot';
 import { shuffleArray } from '../../../shared/picker/weightedPicker';
-import { speakText, preloadAudioList } from '../utils/audio';
+import { speakText, preloadAudioList, subscribeAudioSource, AudioSourceType } from '../utils/audio';
 
 export const EvaluationScreen: React.FC = () => {
   const { db, recordWeeklyEvaluation, playSfx, isWeeklyDoneThisWeek } = useApp();
@@ -30,6 +30,11 @@ export const EvaluationScreen: React.FC = () => {
   const [currentAnswerResult, setCurrentAnswerResult] = useState<WeeklyAnswer | null>(null);
   const [testCompleted, setTestCompleted] = useState(false);
   const [isFreePracticeRun, setIsFreePracticeRun] = useState(false);
+  const [audioSource, setAudioSource] = useState<AudioSourceType>('kokoro');
+
+  useEffect(() => {
+    return subscribeAudioSource(setAudioSource);
+  }, []);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -319,6 +324,22 @@ export const EvaluationScreen: React.FC = () => {
                 >
                   <Volume2 size={15} />
                   <span>Écouter ({db.settings.voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                  {audioSource === 'fallback' && (
+                    <span
+                      title="Voix de secours : qualité réduite"
+                      style={{
+                        fontSize: '0.65rem',
+                        backgroundColor: 'rgba(245, 158, 11, 0.25)',
+                        color: '#f59e0b',
+                        padding: '1px 5px',
+                        borderRadius: '4px',
+                        fontWeight: 800,
+                        marginLeft: '2px',
+                      }}
+                    >
+                      ⚠️ Secours
+                    </span>
+                  )}
                 </button>
 
                 {currentWord.example && (

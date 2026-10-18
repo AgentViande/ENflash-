@@ -188,28 +188,42 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
     updater.installUpdate();
   });
 
-  // --- Synthèse vocale & Audio en cascade ---
+  // --- Synthèse vocale & Audio en cascade Kokoro ---
   const voiceMgr = getVoiceManager();
   voiceMgr.setWindow(mainWindow);
 
   ipcMain.handle(
     'audio:getAudioDataUrl',
-    async (_event, { text, accent, preferredVoiceId }: { text: string; accent: any; preferredVoiceId?: string }) => {
-      return voiceMgr.getAudioDataUrl(text, accent, preferredVoiceId);
+    async (
+      _event,
+      {
+        text,
+        accent,
+        preferredVoiceId,
+        speed,
+      }: { text: string; accent: any; preferredVoiceId?: string; speed?: number }
+    ) => {
+      return voiceMgr.getAudioDataUrl(text, accent, preferredVoiceId, speed);
     }
   );
 
-  ipcMain.handle('audio:getVoicesStatus', async () => {
-    return voiceMgr.getVoicesStatus();
+  ipcMain.handle(
+    'audio:getKokoroStatus',
+    async (_event, { accent, preferredVoiceId }: { accent?: any; preferredVoiceId?: string } = {}) => {
+      return voiceMgr.getAudioEngineStatus(accent, preferredVoiceId);
+    }
+  );
+
+  ipcMain.handle('audio:installKokoro', async () => {
+    return voiceMgr.installKokoroModel();
   });
 
-  ipcMain.handle('audio:downloadVoice', async (_event, voiceId: string) => {
-    return voiceMgr.downloadVoice(voiceId);
-  });
-
-  ipcMain.handle('audio:deleteVoice', async (_event, voiceId: string) => {
-    return voiceMgr.deleteVoice(voiceId);
-  });
+  ipcMain.handle(
+    'audio:getComparisonSample',
+    async (_event, { accent, preferredVoiceId }: { accent: any; preferredVoiceId?: string }) => {
+      return voiceMgr.getComparisonSample(accent, preferredVoiceId);
+    }
+  );
 
   ipcMain.handle('audio:getCacheStats', async () => {
     return voiceMgr.getCacheStats();
@@ -217,5 +231,16 @@ export function registerIpcHandlers(mainWindow: BrowserWindow): void {
 
   ipcMain.handle('audio:clearCache', async () => {
     return voiceMgr.clearCache();
+  });
+
+  // Stubs de rétro-compatibilité
+  ipcMain.handle('audio:getVoicesStatus', async () => {
+    return [];
+  });
+  ipcMain.handle('audio:downloadVoice', async () => {
+    return { success: true };
+  });
+  ipcMain.handle('audio:deleteVoice', async () => {
+    return true;
   });
 }

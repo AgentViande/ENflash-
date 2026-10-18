@@ -11,8 +11,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build && electron-builder --dir",
-    "build:win": "tsc && vite build && electron-builder --win",
+    "build": "node scripts/prepare-models.mjs && tsc && vite build && electron-builder --dir",
+    "build:win": "node scripts/prepare-models.mjs && tsc && vite build && electron-builder --win",
     "test": "vitest run",
     "test:watch": "vitest",
     "release": "node scripts/publish.mjs"
@@ -20,6 +20,7 @@
   "dependencies": {
     "canvas-confetti": "^1.9.4",
     "electron-updater": "^6.3.9",
+    "kokoro-js": "^1.2.1",
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

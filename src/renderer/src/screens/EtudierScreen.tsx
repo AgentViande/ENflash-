@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { Word, LeitnerBox } from '../../../shared/types';
-import { speakWord, speakText, preloadAudioList, replayLastAudio } from '../utils/audio';
+import { speakWord, speakText, preloadAudioList, replayLastAudio, subscribeAudioSource, AudioSourceType } from '../utils/audio';
 import { pickDailyTestWords } from '../../../shared/picker/weightedPicker';
 import { getTodayDateString } from '../../../shared/srs/leitner';
 import { Mascot } from '../assets/Mascot';
@@ -35,12 +35,17 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
   const [isDailyMode, setIsDailyMode] = useState<boolean>(initialDailyMode);
   const [isFreePracticeRun, setIsFreePracticeRun] = useState<boolean>(false);
   const [isSlowMode, setIsSlowMode] = useState<boolean>(false);
+  const [audioSource, setAudioSource] = useState<AudioSourceType>('kokoro');
 
   const [cards, setCards] = useState<Word[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [isFlipped, setIsFlipped] = useState<boolean>(false);
   const [sessionCompleted, setSessionCompleted] = useState<boolean>(false);
   const [dailyResults, setDailyResults] = useState<Array<{ wordId: string; success: boolean }>>([]);
+
+  useEffect(() => {
+    return subscribeAudioSource(setAudioSource);
+  }, []);
 
   const direction = db?.settings.cardDirection || 'fr_to_en';
   const voiceAccent = db?.settings.voiceAccent || 'en-US';
@@ -661,6 +666,22 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
                   >
                     <Volume2 size={16} />
                     <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                    {audioSource === 'fallback' && (
+                      <span
+                        title="Voix de secours : qualité réduite"
+                        style={{
+                          fontSize: '0.65rem',
+                          backgroundColor: 'rgba(245, 158, 11, 0.25)',
+                          color: '#f59e0b',
+                          padding: '1px 5px',
+                          borderRadius: '4px',
+                          fontWeight: 800,
+                          marginLeft: '2px',
+                        }}
+                      >
+                        ⚠️ Secours
+                      </span>
+                    )}
                   </button>
 
                   <button
@@ -786,6 +807,22 @@ export const EtudierScreen: React.FC<EtudierScreenProps> = ({
                   >
                     <Volume2 size={16} />
                     <span>Écouter ({voiceAccent === 'en-US' ? 'US' : 'UK'})</span>
+                    {audioSource === 'fallback' && (
+                      <span
+                        title="Voix de secours : qualité réduite"
+                        style={{
+                          fontSize: '0.65rem',
+                          backgroundColor: 'rgba(245, 158, 11, 0.25)',
+                          color: '#f59e0b',
+                          padding: '1px 5px',
+                          borderRadius: '4px',
+                          fontWeight: 800,
+                          marginLeft: '2px',
+                        }}
+                      >
+                        ⚠️ Secours
+                      </span>
+                    )}
                   </button>
 
                   <button

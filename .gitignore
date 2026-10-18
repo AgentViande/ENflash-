@@ -15,6 +15,7 @@ build/
 *.deb
 *.rpm
 *.zip
+resources/models/**/model_*.onnx
 
 # Fichiers temporaires & logs
 npm-debug.log*

@@ -10,6 +10,13 @@
     "dist",
     "dist-electron"
   ],
+  "extraResources": [
+    {
+      "from": "resources/models",
+      "to": "models",
+      "filter": ["**/*"]
+    }
+  ],
   "win": {
     "signAndEditExecutable": false,
     "target": [

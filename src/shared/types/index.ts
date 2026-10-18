@@ -117,6 +117,20 @@ export type ThemeMode = 'dark' | 'light' | 'system';
 export type CardDirection = 'fr_to_en' | 'en_to_fr';
 export type VoiceAccent = 'en-US' | 'en-GB';
 
+export type AudioSourceType = 'cache' | 'kokoro' | 'dictionary' | 'fallback';
+
+export interface AudioEngineStatus {
+  isKokoroReady: boolean;
+  modelStatus: 'installed' | 'downloading' | 'error' | 'absent';
+  modelLocation?: string;
+  activeVoiceId: string;
+  activeAccent: VoiceAccent;
+  activeEngine: 'kokoro' | 'fallback';
+  cacheCount: number;
+  cacheFormattedSize: string;
+  error?: string;
+}
+
 export interface PiperVoiceModel {
   id: string;
   name: string;
