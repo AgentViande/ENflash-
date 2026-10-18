@@ -1,5 +1,10 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.1.1] - 2026-10-18
+
+### 🐛 Corrections
+- fix(audio): normalisation crete anti-saturation, encodage pcm 16-bit 24kHz, repli inter-voix et volume securise
+
 ## [v1.1.0] - 2026-10-18
 
 ### 🚀 Nouveautés & ✨ Améliorations
