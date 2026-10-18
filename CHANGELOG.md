@@ -1,5 +1,24 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.5.0] - 2026-10-18
+
+### 🚀 Nouveautés & Allègement Majeur
+- **Retrait complet du modèle de langage local (`node-llama-cpp`)** :
+  - Suppression de la dépendance native `node-llama-cpp` et de ses binaires C++ volumineux (~41 Mo dans les dépendances), éliminant définitivement les instabilités de chargement et les lenteurs CPU sur les machines modestes.
+  - Conservation intégrale et intacte du moteur vocal neuronal **Kokoro-82M (ONNX, ~92 Mo)**, du préchargement audio et des voix haute fidélité.
+- **Boîte de dialogue de nettoyage du stockage (1.6 Go)** :
+  - Détection automatique au lancement des anciens fichiers de modèles locaux orphelins (`qwen2.5-1.5b` et `0.5b`).
+  - Modal dédié permettant à l'utilisateur de supprimer ces fichiers en 1 clic pour libérer immédiatement 1.6 Go sur son disque dur, en garantissant la préservation de la base de mots et du cache audio Kokoro.
+
+### ✨ Améliorations
+- **Cascade de génération de phrases parallélisée** :
+  - Course en parallèle directe entre le dictionnaire en ligne (`dictionaryapi.dev`) et votre fournisseur d'IA configuré (Google Gemini gratuit, OpenAI, Groq, Mistral, OpenRouter, Personnalisé).
+  - Génération immédiate et légère sans solliciter intensivement le processeur ni consommer inutilement de la mémoire vive.
+- **Migration automatique non-destructive** :
+  - Les phrases d'exemples précédemment créées via le modèle local sont automatiquement préservées et réétiquetées comme phrases générées par IA.
+- **Centre IA simplifié et clarifié** :
+  - Interface recentrée sur les 4 piliers essentiels : Vue d'ensemble, Voix neuronales Kokoro, Phrases d'exemples & File d'attente, et Clé API personnelle.
+
 ## [v1.4.0] - 2026-10-18
 
 ### 🚀 Nouveautés
