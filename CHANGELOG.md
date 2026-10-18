@@ -1,5 +1,23 @@
 # Journal des modifications (CHANGELOG) - ENflash
 
+## [v1.1.0] - 2026-10-18
+
+### 🚀 Nouveautés & ✨ Améliorations
+- **Moteur vocal neuronal local Kokoro-82M (Qualité naturelle moderne)** :
+  - Intégration du modèle Kokoro-82M (quantifié en INT8 q8, ~88 Mo) via `kokoro-js` et ONNX Runtime, remplaçant la voix robotique du narrateur Windows (SAPI).
+  - Inférence 100 % hors du thread d'interface via un Worker thread Node.js dédié (`src/main/audio/kokoroWorker.ts`) pour ne jamais figer les animations ni l'interface.
+  - Modèle embarqué directement dans l'installeur Windows pour un fonctionnement autonome et 100 % hors ligne dès le premier lancement.
+- **Sélection de voix naturelles expressives** :
+  - **Voix américaines (US)** : `af_heart` (voix féminine de référence par défaut, grade A), `af_bella`, `af_nicole`, `am_michael` (masculin naturel) et `am_adam`.
+  - **Voix britanniques (UK)** : `bf_emma` (voix féminine britannique par défaut, grade B-), `bf_isabella`, `bm_george` (masculin) et `bm_lewis`.
+- **Banc d'essai comparatif dans les Paramètres** :
+  - Nouveau bouton *"Lancer le test comparatif"* pour écouter la même phrase successivement avec Kokoro puis avec la voix système Windows pour entendre immédiatement le saut qualitatif.
+- **Transparence et robustesse de la cascade** :
+  - Affichage clair du statut dans Paramètres > Voix (*Voix naturelle Kokoro ✅* ou *Voix de secours ⚠️*), gestion de l'espace disque du cache et bouton *Réparer / réinstaller la voix*.
+  - Badge discret `⚠️ Secours` sur les boutons audio des flashcards et de l'évaluation lorsque la voix système de secours est sollicitée.
+  - Normalisation automatique du volume des audios WAV générés à -0,5 dB.
+  - Journalisation en console de chaque lecture pour faciliter le diagnostic.
+
 ## [v1.0.4] - 2026-10-18
 
 ### 🚀 Nouveautés & ✨ Améliorations
